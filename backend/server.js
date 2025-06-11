@@ -56,6 +56,132 @@ const db = new sqlite3.Database(dbPath, (err) => {
 });
 
 // PDF Parsing Functions
+function parseEnhancedStatement(text) {
+  const transactions = [];
+  const lines = text.split('\n');
+  
+  console.log('=== PARSING ATTEMPT ===');
+  console.log('Total lines to process:', lines.length);
+  
+  // Extended patterns for more banks
+  const allPatterns = [
+    // Chase patterns
+    { name: 'Chase-1', pattern: /^(\d{2}\/\d{2})\s+(.+?)\s+(\$?[\d,]+\.\d{2})$/ },
+    { name: 'Chase-2', pattern: /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d,]+\.\d{2})$/ },
+    
+    // Generic date patterns
+    { name: 'Generic-1', pattern: /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/ },
+    { name: 'Generic-2', pattern: /^(\d{1,2}-\d{1,2}-\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/ },
+    
+    // Bank of America patterns
+    { name: 'BofA-1', pattern: /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})\s*$/ },
+    { name: 'BofA-2', pattern: /^(\d{1,2}\/\d{1,2})\s+(.+?)\s+(\$[\d,]+\.\d{2})\s+(\$[\d,]+\.\d{2})$/ },
+    
+    // Wells Fargo patterns
+    { name: 'Wells-1', pattern: /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/ },
+    
+    // Capital One patterns  
+    { name: 'CapOne-1', pattern: /^(\d{4}-\d{2}-\d{2})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/ },
+    
+    // Discover patterns
+    { name: 'Discover-1', pattern: /^(\d{2}\/\d{2}\/\d{2})\s+(.+?)\s+(\$[\d,]+\.\d{2})$/ },
+    
+    // Generic with leading spaces
+    { name: 'Spaces-1', pattern: /^\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})\s*$/ },
+    { name: 'Spaces-2', pattern: /^\s+(\d{1,2}-\d{1,2}-\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})\s*$/ },
+    
+    // Patterns with transaction types
+    { name: 'Typed-1', pattern: /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+(DEBIT|CREDIT|PAYMENT|DEPOSIT)\s+([\d,]+\.\d{2})$/i },
+    { name: 'Typed-2', pattern: /^(\d{1,2}-\d{1,2}-\d{2,4})\s+(.+?)\s+(DEBIT|CREDIT|PAYMENT|DEPOSIT)\s+([\d,]+\.\d{2})$/i },
+    
+    // Tab-separated patterns
+    { name: 'Tab-1', pattern: /^(\d{1,2}\/\d{1,2}\/\d{2,4})\t(.+?)\t([-+]?\$?[\d,]+\.\d{2})$/ },
+    { name: 'Tab-2', pattern: /^(\d{1,2}-\d{1,2}-\d{2,4})\t(.+?)\t([-+]?\$?[\d,]+\.\d{2})$/ },
+  ];
+  
+  const currentYear = new Date().getFullYear();
+  let patternMatches = {};
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.length < 10) continue;
+    
+    console.log(`Checking line ${i + 1}: "${line}"`);
+    
+    for (const patternObj of allPatterns) {
+      const match = line.match(patternObj.pattern);
+      if (match) {
+        console.log(`  ✅ MATCHED pattern ${patternObj.name}:`, match);
+        
+        // Track pattern usage
+        patternMatches[patternObj.name] = (patternMatches[patternObj.name] || 0) + 1;
+        
+        try {
+          let dateStr, description, amountStr, transactionType;
+          
+          if (match.length === 5) {
+            // Pattern with transaction type
+            [, dateStr, description, transactionType, amountStr] = match;
+            if (transactionType && transactionType.toUpperCase() === 'DEBIT') {
+              amountStr = '-' + amountStr;
+            }
+          } else {
+            [, dateStr, description, amountStr] = match;
+          }
+          
+          // Clean description
+          description = description.trim().replace(/\s+/g, ' ');
+          
+          // Skip headers
+          if (description.length < 3 || 
+              /^(date|description|amount|transaction|balance|total)/i.test(description)) {
+            console.log(`  ❌ Skipped header: "${description}"`);
+            continue;
+          }
+          
+          // Parse date
+          let date = parseDateString(dateStr, currentYear);
+          if (!date) {
+            console.log(`  ❌ Invalid date: "${dateStr}"`);
+            continue;
+          }
+          
+          // Parse amount
+          let amount = parseFloat(amountStr.replace(/[\$,]/g, ''));
+          if (isNaN(amount)) {
+            console.log(`  ❌ Invalid amount: "${amountStr}"`);
+            continue;
+          }
+          
+          const category = categorizeTransaction(description);
+          
+          const transaction = {
+            date,
+            description,
+            amount,
+            category,
+            pattern: patternObj.name,
+            rawLine: line
+          };
+          
+          transactions.push(transaction);
+          console.log(`  ✅ Added transaction:`, transaction);
+          
+        } catch (error) {
+          console.log(`  ❌ Error processing match:`, error.message);
+        }
+        break; // Stop after first match
+      }
+    }
+  }
+  
+  console.log('=== PATTERN USAGE SUMMARY ===');
+  console.log(patternMatches);
+  console.log(`=== FOUND ${transactions.length} TRANSACTIONS ===`);
+  
+  return transactions;
+}
+
 function parseChaseStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
@@ -94,21 +220,8 @@ function parseChaseStatement(text) {
           }
           
           // Parse date
-          let date;
-          if (dateStr.includes('/')) {
-            const dateParts = dateStr.split('/');
-            if (dateParts.length === 2) {
-              // MM/DD format - add current year
-              date = `${currentYear}-${dateParts[0].padStart(2, '0')}-${dateParts[1].padStart(2, '0')}`;
-            } else if (dateParts.length === 3) {
-              // MM/DD/YYYY or MM/DD/YY format
-              let year = dateParts[2];
-              if (year.length === 2) {
-                year = parseInt(year) > 50 ? `19${year}` : `20${year}`;
-              }
-              date = `${year}-${dateParts[0].padStart(2, '0')}-${dateParts[1].padStart(2, '0')}`;
-            }
-          }
+          let date = parseDateString(dateStr, currentYear);
+          if (!date) continue;
           
           // Parse amount
           let amount = parseFloat(amountStr.replace(/[\$,]/g, ''));
@@ -163,7 +276,7 @@ function parseCSVStatement(text) {
         let date, description, amount;
         
         // Try to identify date column (usually first)
-        date = parseDate(fields[0]);
+        date = parseDateString(fields[0]);
         
         // Description is usually second column
         description = fields[1] ? fields[1].trim().replace(/"/g, '') : '';
@@ -218,7 +331,85 @@ function parseCSVLine(line) {
   return fields;
 }
 
-function parseDate(dateStr) {
+// Add a generic statement parser for better coverage
+function parseGenericStatement(text) {
+  const transactions = [];
+  const lines = text.split('\n');
+  
+  // More generic patterns for different bank formats
+  const transactionPatterns = [
+    // Pattern for: Date Description Amount
+    /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/,
+    // Pattern for: MM/DD Description $Amount
+    /^(\d{2}\/\d{2})\s+(.+?)\s+(\$?[-+]?[\d,]+\.\d{2})$/,
+    // Pattern for transactions with leading spaces
+    /^\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})\s*$/,
+    // Pattern for: Date Description Credit/Debit Amount
+    /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+?)\s+(DEBIT|CREDIT)\s+([\d,]+\.\d{2})$/i
+  ];
+  
+  const currentYear = new Date().getFullYear();
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.length < 10) continue;
+    
+    for (const pattern of transactionPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        try {
+          let dateStr, description, amountStr, transactionType;
+          
+          if (match.length === 5) {
+            // Pattern with DEBIT/CREDIT
+            [, dateStr, description, transactionType, amountStr] = match;
+            if (transactionType.toUpperCase() === 'DEBIT') {
+              amountStr = '-' + amountStr;
+            }
+          } else {
+            [, dateStr, description, amountStr] = match;
+          }
+          
+          // Clean up description
+          description = description.trim().replace(/\s+/g, ' ');
+          
+          // Skip obvious headers or invalid descriptions
+          if (description.length < 3 || 
+              /^(date|description|amount|transaction|balance)/i.test(description)) {
+            continue;
+          }
+          
+          // Parse date with better year handling
+          let date = parseDateString(dateStr, currentYear);
+          if (!date) continue;
+          
+          // Parse amount
+          let amount = parseFloat(amountStr.replace(/[\$,]/g, ''));
+          if (isNaN(amount)) continue;
+          
+          // Categorize transaction
+          const category = categorizeTransaction(description);
+          
+          transactions.push({
+            date,
+            description,
+            amount,
+            category
+          });
+          
+        } catch (error) {
+          console.log(`Error parsing line: ${line}`, error);
+        }
+        break;
+      }
+    }
+  }
+  
+  return transactions;
+}
+
+// Helper function to parse date strings more reliably
+function parseDateString(dateStr, currentYear = new Date().getFullYear()) {
   if (!dateStr) return null;
   
   // Remove quotes and clean up
@@ -229,25 +420,47 @@ function parseDate(dateStr) {
     /^(\d{4})-(\d{2})-(\d{2})$/, // YYYY-MM-DD
     /^(\d{2})\/(\d{2})\/(\d{4})$/, // MM/DD/YYYY
     /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/, // M/D/YY or M/D/YYYY
-    /^(\d{2})-(\d{2})-(\d{4})$/ // MM-DD-YYYY
+    /^(\d{2})-(\d{2})-(\d{4})$/, // MM-DD-YYYY
+    /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/, // MM/DD/YYYY or M/D/YYYY
+    /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/, // MM/DD/YY or M/D/YY
+    /^(\d{1,2})[\/\-](\d{1,2})$/ // MM/DD or M/D
   ];
   
   for (const format of formats) {
     const match = dateStr.match(format);
     if (match) {
       let [, p1, p2, p3] = match;
+      let year, month, day;
       
       // Handle different formats
       if (format.source.includes('(\\d{4})')) {
-        // First part is year
-        return `${p1}-${p2.padStart(2, '0')}-${p3.padStart(2, '0')}`;
-      } else {
-        // First part is month/day
-        let year = p3;
-        if (year.length === 2) {
-          year = parseInt(year) > 50 ? `19${year}` : `20${year}`;
+        if (format.source.startsWith('^(\\d{4})')) {
+          // First part is year (YYYY-MM-DD)
+          year = p1;
+          month = p2;
+          day = p3;
+        } else {
+          // Last part is year (MM/DD/YYYY)
+          month = p1;
+          day = p2;
+          year = p3;
         }
-        return `${year}-${p1.padStart(2, '0')}-${p2.padStart(2, '0')}`;
+      } else if (p3) {
+        // MM/DD/YY format
+        month = p1;
+        day = p2;
+        year = p3.length === 2 ? (parseInt(p3) > 50 ? `19${p3}` : `20${p3}`) : p3;
+      } else {
+        // MM/DD format (no year)
+        month = p1;
+        day = p2;
+        year = currentYear;
+      }
+      
+      // Create date and validate
+      const date = new Date(year, month - 1, day);
+      if (date.getMonth() === month - 1 && date.getDate() == day) {
+        return date.toISOString().split('T')[0]; // Return YYYY-MM-DD format
       }
     }
   }
@@ -312,7 +525,7 @@ function categorizeTransaction(description) {
   return 'Shopping';
 }
 
-// File upload endpoint
+// File upload endpoint with better error handling and debugging
 app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -322,7 +535,7 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
     const { originalname, buffer, mimetype } = req.file;
     let transactions = [];
     
-    console.log(`Processing file: ${originalname}, type: ${mimetype}`);
+    console.log(`Processing file: ${originalname}, size: ${buffer.length} bytes, type: ${mimetype}`);
     
     if (mimetype === 'application/pdf' || originalname.toLowerCase().endsWith('.pdf')) {
       // Parse PDF
@@ -331,92 +544,221 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
         const text = data.text;
         
         console.log('PDF text extracted, length:', text.length);
-        console.log('First 500 chars:', text.substring(0, 500));
-        
-        transactions = parseChaseStatement(text);
-        console.log(`Extracted ${transactions.length} transactions from PDF`);
+        console.log('First 1000 chars:', text.substring(0, 1000));
+          transactions = parseEnhancedStatement(text);
+        console.log(`Enhanced parser found ${transactions.length} transactions`);
+
+        if (transactions.length === 0) {
+          console.log('=== NO TRANSACTIONS FOUND - TRYING FALLBACK ===');
+          transactions = parseGenericStatement(text);
+          console.log(`Fallback parser found ${transactions.length} transactions`);
+        }
         
       } catch (pdfError) {
         console.error('PDF parsing error:', pdfError);
-        return res.status(400).json({ error: 'Failed to parse PDF file' });
+        return res.status(400).json({ 
+          error: 'Failed to parse PDF file. Please ensure it\'s a text-based PDF (not scanned image).',
+          details: pdfError.message 
+        });
       }
       
     } else if (mimetype === 'text/csv' || originalname.toLowerCase().endsWith('.csv')) {
       // Parse CSV
-      const text = buffer.toString('utf-8');
-      transactions = parseCSVStatement(text);
-      console.log(`Extracted ${transactions.length} transactions from CSV`);
+      try {
+        const text = buffer.toString('utf-8');
+        console.log('CSV content preview:', text.substring(0, 500));
+        
+        transactions = parseCSVStatement(text);
+        console.log(`Extracted ${transactions.length} transactions from CSV`);
+      } catch (csvError) {
+        console.error('CSV parsing error:', csvError);
+        return res.status(400).json({ 
+          error: 'Failed to parse CSV file. Please check the file format.',
+          details: csvError.message 
+        });
+      }
+    } else {
+      return res.status(400).json({ 
+        error: 'Unsupported file format. Please upload PDF or CSV files only.' 
+      });
     }
     
     if (transactions.length === 0) {
       return res.status(400).json({ 
-        error: 'No transactions found in the file. Please check the file format.' 
+        error: 'No transactions found in the file. Please check if this is a bank statement with transaction data.',
+        debug: {
+          fileName: originalname,
+          fileSize: buffer.length,
+          fileType: mimetype
+        }
       });
     }
     
     // Return transactions for preview
     res.json({
       message: `Found ${transactions.length} transactions`,
-      transactions: transactions.slice(0, 10), // Preview first 10
-      totalCount: transactions.length
+      transactions: transactions,
+      totalCount: transactions.length,
+      fileName: originalname,
+      fileType: mimetype
     });
     
   } catch (error) {
     console.error('Upload processing error:', error);
-    res.status(500).json({ error: 'Failed to process file: ' + error.message });
+    res.status(500).json({ 
+      error: 'Failed to process file: ' + error.message,
+      details: error.stack 
+    });
   }
 });
 
-// Import transactions endpoint
+// Debug endpoint to see raw PDF text extraction
+app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    const { originalname, buffer, mimetype } = req.file;
+    
+    if (mimetype === 'application/pdf' || originalname.toLowerCase().endsWith('.pdf')) {
+      try {
+        const data = await pdf(buffer);
+        const text = data.text;
+        
+        console.log('=== PDF DEBUG INFO ===');
+        console.log('File:', originalname);
+        console.log('Size:', buffer.length, 'bytes');
+        console.log('Text length:', text.length);
+        console.log('=== FULL EXTRACTED TEXT ===');
+        console.log(text);
+        console.log('=== END TEXT ===');
+        
+        // Split into lines and show structure
+        const lines = text.split('\n');
+        console.log('=== LINE BY LINE ===');
+        lines.forEach((line, index) => {
+          if (line.trim()) {
+            console.log(`Line ${index + 1}: "${line.trim()}"`);
+          }
+        });
+        console.log('=== END LINES ===');
+        
+        res.json({
+          fileName: originalname,
+          textLength: text.length,
+          totalLines: lines.length,
+          nonEmptyLines: lines.filter(l => l.trim()).length,
+          firstLinesPreview: lines.slice(0, 20).filter(l => l.trim()),
+          fullText: text // WARNING: This could be large
+        });
+        
+      } catch (pdfError) {
+        console.error('PDF parsing error:', pdfError);
+        res.status(400).json({ error: 'Failed to parse PDF', details: pdfError.message });
+      }
+    } else {
+      res.status(400).json({ error: 'Only PDF files supported for debug' });
+    }
+    
+  } catch (error) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ error: 'Debug failed: ' + error.message });
+  }
+});
+
+// Improved import transactions endpoint
 app.post('/api/import-transactions', (req, res) => {
   const { transactions, accountName } = req.body;
   
-  if (!transactions || !Array.isArray(transactions) || !accountName) {
-    return res.status(400).json({ error: 'Invalid transactions data or missing account name' });
+  if (!transactions || !Array.isArray(transactions)) {
+    return res.status(400).json({ error: 'Invalid transactions data' });
   }
+  
+  if (!accountName) {
+    return res.status(400).json({ error: 'Account name is required' });
+  }
+  
+  console.log(`Importing ${transactions.length} transactions to account: ${accountName}`);
   
   let importedCount = 0;
   let errors = [];
+  let processed = 0;
   
   // Process each transaction
-  transactions.forEach((transaction, index) => {
-    const { date, description, amount, category } = transaction;
-    
-    if (!date || !description || amount === undefined || !category) {
-      errors.push(`Transaction ${index + 1}: Missing required fields`);
-      return;
-    }
-    
-    db.run("INSERT INTO transactions (date, description, amount, category, account_name) VALUES (?, ?, ?, ?, ?)",
-      [date, description, amount, category, accountName], function(err) {
-      if (err) {
-        errors.push(`Transaction ${index + 1}: ${err.message}`);
-      } else {
-        importedCount++;
-        
-        // Update account balance
-        db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?", [amount, accountName]);
-        
-        // Update budget if expense
-        if (amount < 0) {
-          db.run(`UPDATE budgets SET 
-            spent = spent + ?, 
-            remaining = budgeted - spent 
-            WHERE category = ?`, 
-            [Math.abs(amount), category]);
-        }
+  const processTransaction = (transaction, index) => {
+    return new Promise((resolve) => {
+      const { date, description, amount, category } = transaction;
+      
+      if (!date || !description || amount === undefined || !category) {
+        errors.push(`Transaction ${index + 1}: Missing required fields (date, description, amount, or category)`);
+        resolve();
+        return;
       }
+      
+      // Validate date format
+      const parsedDate = new Date(date);
+      if (isNaN(parsedDate.getTime())) {
+        errors.push(`Transaction ${index + 1}: Invalid date format (${date})`);
+        resolve();
+        return;
+      }
+      
+      // Validate amount
+      const numericAmount = parseFloat(amount);
+      if (isNaN(numericAmount)) {
+        errors.push(`Transaction ${index + 1}: Invalid amount (${amount})`);
+        resolve();
+        return;
+      }
+      
+      db.run("INSERT INTO transactions (date, description, amount, category, account_name) VALUES (?, ?, ?, ?, ?)",
+        [date, description, numericAmount, category, accountName], function(err) {
+        if (err) {
+          console.error(`Error inserting transaction ${index + 1}:`, err);
+          errors.push(`Transaction ${index + 1}: Database error - ${err.message}`);
+        } else {
+          importedCount++;
+          
+          // Update account balance if account exists
+          db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?", [numericAmount, accountName], (updateErr) => {
+            if (updateErr) {
+              console.error('Error updating account balance:', updateErr);
+            }
+          });
+          
+          // Update budget if expense (negative amount)
+          if (numericAmount < 0) {
+            db.run(`UPDATE budgets SET 
+              spent = spent + ?, 
+              remaining = budgeted - spent 
+              WHERE category = ?`, 
+              [Math.abs(numericAmount), category], (budgetErr) => {
+              if (budgetErr) {
+                console.error('Error updating budget:', budgetErr);
+              }
+            });
+          }
+        }
+        
+        processed++;
+        resolve();
+      });
     });
-  });
+  };
   
-  setTimeout(() => {
+  // Process all transactions
+  Promise.all(transactions.map(processTransaction)).then(() => {
+    console.log(`Import complete: ${importedCount}/${transactions.length} transactions imported`);
+    
     res.json({
-      message: `Imported ${importedCount} transactions successfully`,
+      message: `Successfully imported ${importedCount} out of ${transactions.length} transactions`,
       importedCount,
       totalCount: transactions.length,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      skippedCount: transactions.length - importedCount
     });
-  }, 1000);
+  });
 });
 
 // Admin interface route
@@ -467,30 +809,6 @@ app.get('/admin', (req, res) => {
         }
         .status.success { background: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
         .status.error { background: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
-        .form-group { margin: 15px 0; }
-        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-        .form-group input, .form-group select {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .card {
-            background: #f9f9f9;
-            padding: 20px;
-            border-radius: 8px;
-            border: 1px solid #eee;
-        }
-        .warning {
-            background: #fff3cd;
-            color: #856404;
-            padding: 15px;
-            border-radius: 5px;
-            border: 1px solid #ffeaa7;
-            margin: 20px 0;
-        }
         .info {
             background: #d1ecf1;
             color: #0c5460;
@@ -511,48 +829,18 @@ app.get('/admin', (req, res) => {
 
         <div id="status" class="status"></div>
 
-        <!-- Database Management -->
         <div class="section">
             <h2>🗄️ Database Management</h2>
-            <div class="grid">
-                <div class="card">
-                    <h3>🔄 Reset Data</h3>
-                    <p>Reset database to sample data (useful for testing)</p>
-                    <button class="btn success" onclick="resetToSample()">Reset to Sample Data</button>
-                </div>
-                <div class="card">
-                    <h3>🗑️ Clear All Data</h3>
-                    <div class="warning">
-                        <strong>⚠️ Warning:</strong> This will permanently delete all your data!
-                    </div>
-                    <button class="btn danger" onclick="clearAllData()">Clear All Data</button>
-                </div>
-            </div>
+            <button class="btn success" onclick="resetToSample()">Reset to Sample Data</button>
+            <button class="btn danger" onclick="clearAllData()">Clear All Data</button>
         </div>
 
-        <!-- File Upload Test -->
         <div class="section">
             <h2>📄 Test File Upload</h2>
-            <div class="card">
-                <h3>Upload Bank Statement</h3>
-                <p>Upload a PDF or CSV file to test the parsing functionality</p>
-                <input type="file" id="testFile" accept=".pdf,.csv">
-                <button class="btn" onclick="testUpload()">Test Upload & Parse</button>
-                <div id="uploadResult" style="margin-top: 15px;"></div>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>📚 PDF Upload Instructions</h2>
-            <div class="info">
-                <h3>💡 Tips for Better PDF Parsing:</h3>
-                <ul>
-                    <li><strong>Chase Credit Card:</strong> Works best with monthly statements</li>
-                    <li><strong>Date Format:</strong> MM/DD or MM/DD/YYYY formats work well</li>
-                    <li><strong>Clean PDFs:</strong> Text-based PDFs work better than scanned images</li>
-                    <li><strong>File Size:</strong> Keep under 10MB for best performance</li>
-                </ul>
-            </div>
+            <p>Upload a PDF or CSV file to test the parsing functionality</p>
+            <input type="file" id="testFile" accept=".pdf,.csv">
+            <button class="btn" onclick="testUpload()">Test Upload & Parse</button>
+            <div id="uploadResult" style="margin-top: 15px;"></div>
         </div>
     </div>
 
@@ -770,10 +1058,6 @@ app.post('/api/admin/reset-to-sample', (req, res) => {
     }, 100);
   });
 });
-
-// All other existing API routes (accounts, transactions, budgets, goals, investments, dashboard, categories)
-// [Previous API routes remain the same - truncated for brevity]
-// ... [Include all the previous API routes here] ...
 
 // Accounts
 app.get('/api/accounts', (req, res) => {
