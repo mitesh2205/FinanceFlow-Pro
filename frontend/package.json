@@ -1,0 +1,12 @@
+{
+  "name": "financeflow-pro-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for FinanceFlow Pro - Personal Finance Management System",
+  "main": "app.js",
+  "scripts": {
+    "start": "http-server -p 8000 --cors"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1"
+  }
+}
