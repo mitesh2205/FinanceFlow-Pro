@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinanceFlow Pro - Personal Finance Management</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar__header">
+            <h2 class="sidebar__title">FinanceFlow Pro</h2>
+        </div>
+        <ul class="sidebar__menu">
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link active" data-page="dashboard">
+                    <span class="sidebar__icon">📊</span>
+                    Dashboard
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="transactions">
+                    <span class="sidebar__icon">💳</span>
+                    Transactions
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="budget">
+                    <span class="sidebar__icon">📋</span>
+                    Budget Planner
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="goals">
+                    <span class="sidebar__icon">🎯</span>
+                    Goals & Savings
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="investments">
+                    <span class="sidebar__icon">📈</span>
+                    Investments
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="analytics">
+                    <span class="sidebar__icon">📊</span>
+                    Analytics & Reports
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="upload">
+                    <span class="sidebar__icon">📁</span>
+                    Upload Statements
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="settings">
+                    <span class="sidebar__icon">⚙️</span>
+                    Settings
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <!-- Header -->
+        <header class="header">
+            <div class="header__left">
+                <button class="btn btn--secondary sidebar-toggle" id="sidebarToggle">☰</button>
+                <h1 class="header__title" id="pageTitle">Dashboard</h1>
+            </div>
+            <div class="header__right">
+                <div class="search-box">
+                    <input type="text" class="form-control search-input" placeholder="Search transactions...">
+                    <button class="btn btn--primary search-btn">🔍</button>
+                </div>
+                <div class="user-profile">
+                    <span class="user-name">John Doe</span>
+                    <div class="user-avatar">JD</div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Dashboard Page -->
+        <div class="page active" id="dashboard">
+            <div class="dashboard-grid">
+                <!-- Financial Overview Cards -->
+                <div class="overview-cards">
+                    <div class="card overview-card">
+                        <div class="card__body">
+                            <h3>Total Balance</h3>
+                            <div class="amount amount--positive">$44,646.67</div>
+                            <div class="change">+5.2% this month</div>
+                        </div>
+                    </div>
+                    <div class="card overview-card">
+                        <div class="card__body">
+                            <h3>Monthly Income</h3>
+                            <div class="amount amount--positive">$3,500.00</div>
+                            <div class="change">Same as last month</div>
+                        </div>
+                    </div>
+                    <div class="card overview-card">
+                        <div class="card__body">
+                            <h3>Monthly Expenses</h3>
+                            <div class="amount amount--negative">$2,850.00</div>
+                            <div class="change">-2.1% from last month</div>
+                        </div>
+                    </div>
+                    <div class="card overview-card">
+                        <div class="card__body">
+                            <h3>Savings Rate</h3>
+                            <div class="amount">18.6%</div>
+                            <div class="change">+1.2% from last month</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Section -->
+                <div class="charts-section">
+                    <div class="card">
+                        <div class="card__body">
+                            <h3>Cash Flow (Last 6 Months)</h3>
+                            <canvas id="cashFlowChart" width="400" height="200"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card__body">
+                            <h3>Expense Breakdown</h3>
+                            <canvas id="expenseChart" width="400" height="200"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="card recent-transactions">
+                    <div class="card__body">
+                        <h3>Recent Transactions</h3>
+                        <div class="transaction-list" id="recentTransactions">
+                            <!-- Transactions will be populated by JavaScript -->
+                        </div>
+                        <a href="#" class="btn btn--outline view-all-btn" data-page="transactions">View All Transactions</a>
+                    </div>
+                </div>
+
+                <!-- Budget Progress -->
+                <div class="card budget-progress">
+                    <div class="card__body">
+                        <h3>Budget Progress</h3>
+                        <div class="budget-items" id="budgetProgress">
+                            <!-- Budget items will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transactions Page -->
+        <div class="page" id="transactions">
+            <div class="page-header">
+                <h2>Transaction Management</h2>
+                <div class="page-actions">
+                    <button class="btn btn--secondary" id="addTransactionBtn">+ Add Transaction</button>
+                    <button class="btn btn--outline" id="filterBtn">Filter</button>
+                </div>
+            </div>
+            
+            <div class="transaction-filters" id="transactionFilters" style="display: none;">
+                <div class="filter-row">
+                    <select class="form-control" id="categoryFilter">
+                        <option value="">All Categories</option>
+                    </select>
+                    <select class="form-control" id="accountFilter">
+                        <option value="">All Accounts</option>
+                    </select>
+                    <input type="date" class="form-control" id="dateFromFilter">
+                    <input type="date" class="form-control" id="dateToFilter">
+                    <button class="btn btn--primary" id="applyFilters">Apply</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card__body">
+                    <div class="transaction-table" id="transactionTable">
+                        <!-- Transaction table will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Budget Page -->
+        <div class="page" id="budget">
+            <div class="page-header">
+                <h2>Budget Planner</h2>
+                <div class="page-actions">
+                    <button class="btn btn--secondary" id="createBudgetBtn">+ Create Budget</button>
+                    <button class="btn btn--outline">Budget Templates</button>
+                </div>
+            </div>
+
+            <div class="budget-overview">
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Budget Overview</h3>
+                        <div class="budget-summary">
+                            <div class="budget-total">
+                                <div class="budget-amount">$2,250 / $2,650</div>
+                                <div class="budget-percentage">85% Used</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="budget-categories" id="budgetCategories">
+                <!-- Budget categories will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Goals Page -->
+        <div class="page" id="goals">
+            <div class="page-header">
+                <h2>Goals & Savings</h2>
+                <div class="page-actions">
+                    <button class="btn btn--secondary" id="addGoalBtn">+ Add Goal</button>
+                </div>
+            </div>
+
+            <div class="goals-grid" id="goalsGrid">
+                <!-- Goals will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Investments Page -->
+        <div class="page" id="investments">
+            <div class="page-header">
+                <h2>Investment Portfolio</h2>
+                <div class="page-actions">
+                    <button class="btn btn--secondary">+ Add Investment</button>
+                </div>
+            </div>
+
+            <div class="investment-overview">
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Portfolio Value</h3>
+                        <div class="portfolio-value">$28,750.89</div>
+                        <div class="portfolio-change">+12.1% (+$3,089.45)</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="investment-holdings" id="investmentHoldings">
+                <!-- Investment holdings will be populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Analytics Page -->
+        <div class="page" id="analytics">
+            <div class="page-header">
+                <h2>Analytics & Reports</h2>
+                <div class="page-actions">
+                    <button class="btn btn--outline">Export Report</button>
+                </div>
+            </div>
+
+            <div class="analytics-grid">
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Spending Trends</h3>
+                        <canvas id="spendingTrendChart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Net Worth Progress</h3>
+                        <canvas id="netWorthChart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Financial Health Score</h3>
+                        <div class="health-score">
+                            <div class="score-circle">85</div>
+                            <div class="score-label">Excellent</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Statements Page -->
+        <div class="page" id="upload">
+            <div class="page-header">
+                <h2>Upload Bank Statements</h2>
+                <div class="page-actions">
+                    <button class="btn btn--outline">Upload History</button>
+                </div>
+            </div>
+
+            <div class="upload-section">
+                <div class="card upload-card">
+                    <div class="card__body">
+                        <div class="upload-area" id="uploadArea">
+                            <div class="upload-icon">📁</div>
+                            <h3>Drag and drop your statements here</h3>
+                            <p>Supported formats: PDF, CSV, XLS, XLSX</p>
+                            <button class="btn btn--primary" id="selectFileBtn">Select Files</button>
+                            <input type="file" id="fileInput" accept=".pdf,.csv,.xls,.xlsx" multiple hidden>
+                        </div>
+                        <div class="upload-progress" id="uploadProgress" style="display: none;">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <div class="progress-text" id="progressText">Processing...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" id="uploadPreview" style="display: none;">
+                    <div class="card__body">
+                        <h3>Upload Preview</h3>
+                        <div class="preview-table" id="previewTable">
+                            <!-- Preview table will be populated by JavaScript -->
+                        </div>
+                        <div class="preview-actions">
+                            <button class="btn btn--primary" id="confirmUpload">Confirm Upload</button>
+                            <button class="btn btn--outline" id="cancelUpload">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Page -->
+        <div class="page" id="settings">
+            <div class="page-header">
+                <h2>Settings</h2>
+            </div>
+
+            <div class="settings-sections">
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Account Settings</h3>
+                        <div class="form-group">
+                            <label class="form-label">Full Name</label>
+                            <input type="text" class="form-control" value="John Doe">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Email</label>
+                            <input type="email" class="form-control" value="john.doe@example.com">
+                        </div>
+                        <button class="btn btn--primary">Update Profile</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card__body">
+                        <h3>Preferences</h3>
+                        <div class="form-group">
+                            <label class="form-label">Currency</label>
+                            <select class="form-control">
+                                <option selected>USD ($)</option>
+                                <option>EUR (€)</option>
+                                <option>GBP (£)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Date Format</label>
+                            <select class="form-control">
+                                <option selected>MM/DD/YYYY</option>
+                                <option>DD/MM/YYYY</option>
+                                <option>YYYY-MM-DD</option>
+                            </select>
+                        </div>
+                        <button class="btn btn--primary">Save Preferences</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal" id="addTransactionModal">
+        <div class="modal-content">
+            <h3>Add Transaction</h3>
+            <form id="addTransactionForm">
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" class="form-control" id="transactionDescription" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Amount</label>
+                    <input type="number" class="form-control" id="transactionAmount" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Category</label>
+                    <select class="form-control" id="transactionCategory" required>
+                        <!-- Categories will be populated by JavaScript -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Account</label>
+                    <select class="form-control" id="transactionAccount" required>
+                        <!-- Accounts will be populated by JavaScript -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date</label>
+                    <input type="date" class="form-control" id="transactionDate" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn--primary">Add Transaction</button>
+                    <button type="button" class="btn btn--outline" id="cancelTransaction">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast" id="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

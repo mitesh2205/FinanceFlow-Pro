@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinanceFlow Pro - Data Management</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #2196F3; text-align: center; }
+        h2 { color: #555; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .section { margin: 30px 0; }
+        .btn {
+            background: #2196F3;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+            font-size: 14px;
+        }
+        .btn:hover { background: #1976D2; }
+        .btn.danger { background: #f44336; }
+        .btn.danger:hover { background: #d32f2f; }
+        .btn.success { background: #4CAF50; }
+        .btn.success:hover { background: #45a049; }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            display: none;
+        }
+        .status.success { background: #dff0d8; color: #3c763d; border: 1px solid #d6e9c6; }
+        .status.error { background: #f2dede; color: #a94442; border: 1px solid #ebccd1; }
+        .form-group { margin: 15px 0; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .card {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+        }
+        .warning {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #ffeaa7;
+            margin: 20px 0;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #bee5eb;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏦 FinanceFlow Pro - Data Management</h1>
+        
+        <div class="info">
+            <strong>📍 Current Status:</strong> Connected to API at <code>http://localhost:3001</code>
+        </div>
+
+        <div id="status" class="status"></div>
+
+        <!-- Database Management -->
+        <div class="section">
+            <h2>🗄️ Database Management</h2>
+            <div class="grid">
+                <div class="card">
+                    <h3>🔄 Reset Data</h3>
+                    <p>Reset database to sample data (useful for testing)</p>
+                    <button class="btn success" onclick="resetToSample()">Reset to Sample Data</button>
+                </div>
+                <div class="card">
+                    <h3>🗑️ Clear All Data</h3>
+                    <div class="warning">
+                        <strong>⚠️ Warning:</strong> This will permanently delete all your data!
+                    </div>
+                    <button class="btn danger" onclick="clearAllData()">Clear All Data</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Add Forms -->
+        <div class="section">
+            <h2>➕ Quick Add Data</h2>
+            
+            <div class="grid">
+                <!-- Add Account -->
+                <div class="card">
+                    <h3>🏦 Add Account</h3>
+                    <form id="accountForm">
+                        <div class="form-group">
+                            <label>Account Name</label>
+                            <input type="text" id="accountName" placeholder="e.g., Main Checking" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select id="accountType" required>
+                                <option value="checking">Checking</option>
+                                <option value="savings">Savings</option>
+                                <option value="credit">Credit Card</option>
+                                <option value="investment">Investment</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Initial Balance</label>
+                            <input type="number" id="accountBalance" step="0.01" placeholder="0.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Institution</label>
+                            <input type="text" id="accountInstitution" placeholder="e.g., Chase Bank" required>
+                        </div>
+                        <button type="submit" class="btn">Add Account</button>
+                    </form>
+                </div>
+
+                <!-- Add Transaction -->
+                <div class="card">
+                    <h3>💳 Add Transaction</h3>
+                    <form id="transactionForm">
+                        <div class="form-group">
+                            <label>Description</label>
+                            <input type="text" id="transactionDesc" placeholder="e.g., Grocery Store" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount</label>
+                            <input type="number" id="transactionAmount" step="0.01" placeholder="-50.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <select id="transactionCategory" required>
+                                <option value="Food & Dining">Food & Dining</option>
+                                <option value="Transportation">Transportation</option>
+                                <option value="Entertainment">Entertainment</option>
+                                <option value="Bills & Utilities">Bills & Utilities</option>
+                                <option value="Shopping">Shopping</option>
+                                <option value="Healthcare">Healthcare</option>
+                                <option value="Education">Education</option>
+                                <option value="Travel">Travel</option>
+                                <option value="Income">Income</option>
+                                <option value="Transfer">Transfer</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Account</label>
+                            <input type="text" id="transactionAccount" placeholder="Account name" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Date</label>
+                            <input type="date" id="transactionDate" required>
+                        </div>
+                        <button type="submit" class="btn">Add Transaction</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="grid">
+                <!-- Add Budget -->
+                <div class="card">
+                    <h3>📊 Add Budget</h3>
+                    <form id="budgetForm">
+                        <div class="form-group">
+                            <label>Category</label>
+                            <select id="budgetCategory" required>
+                                <option value="Food & Dining">Food & Dining</option>
+                                <option value="Transportation">Transportation</option>
+                                <option value="Entertainment">Entertainment</option>
+                                <option value="Bills & Utilities">Bills & Utilities</option>
+                                <option value="Shopping">Shopping</option>
+                                <option value="Healthcare">Healthcare</option>
+                                <option value="Education">Education</option>
+                                <option value="Travel">Travel</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Monthly Budget</label>
+                            <input type="number" id="budgetAmount" step="0.01" placeholder="500.00" required>
+                        </div>
+                        <button type="submit" class="btn">Add Budget</button>
+                    </form>
+                </div>
+
+                <!-- Add Goal -->
+                <div class="card">
+                    <h3>🎯 Add Goal</h3>
+                    <form id="goalForm">
+                        <div class="form-group">
+                            <label>Goal Name</label>
+                            <input type="text" id="goalName" placeholder="e.g., Emergency Fund" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Target Amount</label>
+                            <input type="number" id="goalTarget" step="0.01" placeholder="10000.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Current Amount</label>
+                            <input type="number" id="goalCurrent" step="0.01" placeholder="0.00" value="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Deadline</label>
+                            <input type="date" id="goalDeadline">
+                        </div>
+                        <button type="submit" class="btn">Add Goal</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Instructions -->
+        <div class="section">
+            <h2>📚 Instructions</h2>
+            <div class="info">
+                <h3>🚀 Getting Started with Your Own Data:</h3>
+                <ol>
+                    <li><strong>Clear Sample Data:</strong> Click "Clear All Data" to remove dummy data</li>
+                    <li><strong>Add Your Accounts:</strong> Use the form above to add your real bank accounts</li>
+                    <li><strong>Add Your Transactions:</strong> Start adding your real transactions</li>
+                    <li><strong>Set Your Budgets:</strong> Create budgets for different categories</li>
+                    <li><strong>Set Your Goals:</strong> Add your savings goals</li>
+                    <li><strong>Use the Main App:</strong> Go to <a href="http://localhost:8000" target="_blank">http://localhost:8000</a></li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3001/api';
+
+        // Set today's date as default
+        document.getElementById('transactionDate').value = new Date().toISOString().split('T')[0];
+
+        function showStatus(message, type = 'success') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            setTimeout(() => status.style.display = 'none', 5000);
+        }
+
+        async function apiCall(endpoint, method = 'GET', data = null) {
+            try {
+                const options = {
+                    method,
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (data) options.body = JSON.stringify(data);
+                
+                const response = await fetch(`${API_BASE}${endpoint}`, options);
+                const result = await response.json();
+                
+                if (!response.ok) throw new Error(result.error);
+                return result;
+            } catch (error) {
+                showStatus(`Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        async function resetToSample() {
+            if (confirm('This will replace all data with sample data. Continue?')) {
+                try {
+                    await apiCall('/admin/reset-to-sample', 'POST');
+                    showStatus('Database reset to sample data successfully!');
+                } catch (error) {
+                    console.error('Reset failed:', error);
+                }
+            }
+        }
+
+        async function clearAllData() {
+            if (confirm('⚠️ This will permanently delete ALL data. Are you sure?')) {
+                if (confirm('⚠️ Last chance! This cannot be undone. Really delete everything?')) {
+                    try {
+                        await apiCall('/admin/clear-all-data', 'POST');
+                        showStatus('All data cleared successfully!');
+                    } catch (error) {
+                        console.error('Clear failed:', error);
+                    }
+                }
+            }
+        }
+
+        // Form handlers
+        document.getElementById('accountForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                await apiCall('/accounts', 'POST', {
+                    name: document.getElementById('accountName').value,
+                    type: document.getElementById('accountType').value,
+                    balance: parseFloat(document.getElementById('accountBalance').value),
+                    institution: document.getElementById('accountInstitution').value
+                });
+                showStatus('Account added successfully!');
+                e.target.reset();
+            } catch (error) {
+                console.error('Add account failed:', error);
+            }
+        });
+
+        document.getElementById('transactionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                await apiCall('/transactions', 'POST', {
+                    description: document.getElementById('transactionDesc').value,
+                    amount: parseFloat(document.getElementById('transactionAmount').value),
+                    category: document.getElementById('transactionCategory').value,
+                    account_name: document.getElementById('transactionAccount').value,
+                    date: document.getElementById('transactionDate').value
+                });
+                showStatus('Transaction added successfully!');
+                e.target.reset();
+                document.getElementById('transactionDate').value = new Date().toISOString().split('T')[0];
+            } catch (error) {
+                console.error('Add transaction failed:', error);
+            }
+        });
+
+        document.getElementById('budgetForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                await apiCall('/budgets', 'POST', {
+                    category: document.getElementById('budgetCategory').value,
+                    budgeted: parseFloat(document.getElementById('budgetAmount').value)
+                });
+                showStatus('Budget added successfully!');
+                e.target.reset();
+            } catch (error) {
+                console.error('Add budget failed:', error);
+            }
+        });
+
+        document.getElementById('goalForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            try {
+                await apiCall('/goals', 'POST', {
+                    name: document.getElementById('goalName').value,
+                    target: parseFloat(document.getElementById('goalTarget').value),
+                    current: parseFloat(document.getElementById('goalCurrent').value) || 0,
+                    deadline: document.getElementById('goalDeadline').value || null
+                });
+                showStatus('Goal added successfully!');
+                e.target.reset();
+            } catch (error) {
+                console.error('Add goal failed:', error);
+            }
+        });
+    </script>
+</body>
+</html>
