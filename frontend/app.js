@@ -6,6 +6,7 @@ let currentPage = 'dashboard';
 let charts = {};
 let filteredTransactions = [];
 let editingTransactionId = null; // Track which transaction is being edited
+let uploadedTransactions = []; // Store parsed transactions globally
 let appData = {
   accounts: [],
   transactions: [],
@@ -886,7 +887,7 @@ function initializeAnalyticsCharts() {
   }
 }
 
-// Upload Functions (keeping original for now)
+// Upload Functions - FIXED TO USE REAL BACKEND PARSING
 function initializeUpload() {
   setupUploadEventListeners();
 }
@@ -895,8 +896,6 @@ function setupUploadEventListeners() {
   const uploadArea = document.getElementById('uploadArea');
   const fileInput = document.getElementById('fileInput');
   const selectFileBtn = document.getElementById('selectFileBtn');
-  const uploadProgress = document.getElementById('uploadProgress');
-  const uploadPreview = document.getElementById('uploadPreview');
   
   if (selectFileBtn) {
     selectFileBtn.addEventListener('click', () => {
@@ -926,25 +925,9 @@ function setupUploadEventListeners() {
       handleFileUpload(e.target.files);
     });
   }
-  
-  const confirmUpload = document.getElementById('confirmUpload');
-  const cancelUpload = document.getElementById('cancelUpload');
-  
-  if (confirmUpload) {
-    confirmUpload.addEventListener('click', () => {
-      processUpload();
-    });
-  }
-  
-  if (cancelUpload) {
-    cancelUpload.addEventListener('click', () => {
-      uploadPreview.style.display = 'none';
-      uploadProgress.style.display = 'none';
-      fileInput.value = '';
-    });
-  }
 }
 
+// FIXED: Real file upload that calls backend
 function handleFileUpload(files) {
   if (files.length === 0) return;
   
@@ -957,37 +940,88 @@ function handleFileUpload(files) {
     return;
   }
   
+  // Upload the actual file to backend for parsing
+  uploadFileToBackend(file);
+}
+
+// FIXED: Actually upload to backend
+async function uploadFileToBackend(file) {
   const uploadProgress = document.getElementById('uploadProgress');
   const progressFill = document.getElementById('progressFill');
   const progressText = document.getElementById('progressText');
   
   uploadProgress.style.display = 'block';
+  progressText.textContent = 'Uploading and parsing file...';
   
-  let progress = 0;
-  const interval = setInterval(() => {
-    progress += 10;
-    progressFill.style.width = progress + '%';
-    progressText.textContent = `Processing... ${progress}%`;
+  try {
+    // Create FormData to send the file
+    const formData = new FormData();
+    formData.append('file', file);
     
-    if (progress >= 100) {
-      clearInterval(interval);
-      setTimeout(() => {
-        showUploadPreview(file);
-      }, 500);
+    // Upload and parse the file
+    const response = await fetch(`${API_BASE_URL}/upload-statement`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to parse file');
     }
-  }, 200);
+    
+    const result = await response.json();
+    console.log('Backend parsing result:', result);
+    
+    // Animate progress to 100%
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += 10;
+      progressFill.style.width = progress + '%';
+      
+      if (progress >= 100) {
+        clearInterval(interval);
+        progressText.textContent = `Successfully parsed ${result.totalCount} transactions!`;
+        
+        // Store the parsed transactions
+        uploadedTransactions = result.transactions || [];
+        
+        setTimeout(() => {
+          showUploadPreview(file, result);
+        }, 500);
+      }
+    }, 50);
+    
+  } catch (error) {
+    console.error('Upload failed:', error);
+    uploadProgress.style.display = 'none';
+    showToast(`Upload failed: ${error.message}`, 'error');
+  }
 }
 
-function showUploadPreview(file) {
+// FIXED: Show real parsed data
+function showUploadPreview(file, parseResult) {
+  const uploadProgress = document.getElementById('uploadProgress');
   const uploadPreview = document.getElementById('uploadPreview');
   const previewTable = document.getElementById('previewTable');
   
-  const sampleData = [
-    { date: '2024-06-10', description: 'Sample Transaction 1', amount: '-45.67', category: 'Food & Dining' },
-    { date: '2024-06-09', description: 'Sample Transaction 2', amount: '-123.45', category: 'Shopping' },
-    { date: '2024-06-08', description: 'Sample Transaction 3', amount: '2500.00', category: 'Income' }
-  ];
+  uploadProgress.style.display = 'none';
   
+  // Use real parsed data instead of sample data
+  const transactions = parseResult.transactions || [];
+  
+  if (transactions.length === 0) {
+    uploadPreview.innerHTML = `
+      <div class="card__body">
+        <h3>No Transactions Found</h3>
+        <p>No transactions could be extracted from this file. Please check the file format and try again.</p>
+        <button class="btn btn--outline" onclick="cancelUpload()">Cancel</button>
+      </div>
+    `;
+    uploadPreview.style.display = 'block';
+    return;
+  }
+  
+  // Show preview of actual parsed transactions
   previewTable.innerHTML = `
     <table>
       <thead>
@@ -999,69 +1033,131 @@ function showUploadPreview(file) {
         </tr>
       </thead>
       <tbody>
-        ${sampleData.map(row => `
+        ${transactions.slice(0, 10).map(transaction => `
           <tr>
-            <td>${row.date}</td>
-            <td>${row.description}</td>
-            <td class="${parseFloat(row.amount) < 0 ? 'amount--negative' : 'amount--positive'}">
-              ${formatCurrency(parseFloat(row.amount))}
+            <td>${transaction.date}</td>
+            <td>${transaction.description}</td>
+            <td class="${parseFloat(transaction.amount) < 0 ? 'amount--negative' : 'amount--positive'}">
+              ${formatCurrency(parseFloat(transaction.amount))}
             </td>
-            <td>${row.category}</td>
+            <td>${transaction.category}</td>
           </tr>
         `).join('')}
+        ${transactions.length > 10 ? `
+          <tr>
+            <td colspan="4" style="text-align: center; color: var(--color-text-secondary); font-style: italic;">
+              ... and ${transactions.length - 10} more transactions
+            </td>
+          </tr>
+        ` : ''}
       </tbody>
     </table>
+  `;
+  
+  // Update the upload preview card content
+  uploadPreview.innerHTML = `
+    <div class="card__body">
+      <h3>Upload Preview - ${transactions.length} transactions found</h3>
+      <div class="preview-table">
+        ${previewTable.innerHTML}
+      </div>
+      <div class="preview-actions">
+        <button class="btn btn--primary" onclick="processUpload()">Import ${transactions.length} Transactions</button>
+        <button class="btn btn--outline" onclick="cancelUpload()">Cancel</button>
+      </div>
+    </div>
   `;
   
   uploadPreview.style.display = 'block';
 }
 
+// FIXED: Actually import parsed transactions
 async function processUpload() {
   const uploadProgress = document.getElementById('uploadProgress');
   const uploadPreview = document.getElementById('uploadPreview');
   const progressFill = document.getElementById('progressFill');
   const progressText = document.getElementById('progressText');
   
+  if (!uploadedTransactions || uploadedTransactions.length === 0) {
+    showToast('No transactions to import', 'error');
+    return;
+  }
+  
   uploadPreview.style.display = 'none';
   uploadProgress.style.display = 'block';
   progressText.textContent = 'Importing transactions...';
+  progressFill.style.width = '0%';
   
-  let progress = 0;
-  const interval = setInterval(async () => {
-    progress += 15;
-    progressFill.style.width = progress + '%';
+  try {
+    // Get the default account for importing (you might want to let user choose)
+    if (appData.accounts.length === 0) {
+      await loadAccounts();
+    }
     
-    if (progress >= 100) {
-      clearInterval(interval);
+    const defaultAccount = appData.accounts[0]?.name || 'Imported Account';
+    
+    console.log('Importing transactions:', uploadedTransactions.length, 'to account:', defaultAccount);
+    
+    // Import the actual parsed transactions
+    const response = await fetch(`${API_BASE_URL}/import-transactions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        transactions: uploadedTransactions,
+        accountName: defaultAccount
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to import transactions');
+    }
+    
+    const result = await response.json();
+    console.log('Import result:', result);
+    
+    // Animate progress
+    let progress = 0;
+    const interval = setInterval(async () => {
+      progress += 20;
+      progressFill.style.width = progress + '%';
       
-      const newTransactions = [
-        { date: '2024-06-10', description: 'Sample Transaction 1', amount: -45.67, category: 'Food & Dining', account_name: 'Chase Checking' },
-        { date: '2024-06-09', description: 'Sample Transaction 2', amount: -123.45, category: 'Shopping', account_name: 'Chase Checking' },
-        { date: '2024-06-08', description: 'Sample Transaction 3', amount: 2500.00, category: 'Income', account_name: 'Chase Checking' }
-      ];
-      
-      try {
-        for (const transaction of newTransactions) {
-          await apiRequest('/transactions', {
-            method: 'POST',
-            body: JSON.stringify(transaction)
-          });
-        }
+      if (progress >= 100) {
+        clearInterval(interval);
         
         setTimeout(async () => {
           uploadProgress.style.display = 'none';
-          showToast('Transactions imported successfully!');
+          showToast(`Successfully imported ${result.importedCount} transactions!`);
           
+          // Clear uploaded data
+          uploadedTransactions = [];
+          document.getElementById('fileInput').value = '';
+          
+          // Navigate to transactions page to see the imported data
           const targetLink = document.querySelector('[data-page="transactions"]');
           if (targetLink) targetLink.click();
         }, 1000);
-      } catch (error) {
-        console.error('Failed to import transactions:', error);
-        showToast('Failed to import transactions', 'error');
-        uploadProgress.style.display = 'none';
       }
-    }
-  }, 200);
+    }, 200);
+    
+  } catch (error) {
+    console.error('Failed to import transactions:', error);
+    showToast(`Import failed: ${error.message}`, 'error');
+    uploadProgress.style.display = 'none';
+  }
+}
+
+function cancelUpload() {
+  const uploadProgress = document.getElementById('uploadProgress');
+  const uploadPreview = document.getElementById('uploadPreview');
+  const fileInput = document.getElementById('fileInput');
+  
+  uploadProgress.style.display = 'none';
+  uploadPreview.style.display = 'none';
+  fileInput.value = '';
+  uploadedTransactions = [];
 }
 
 // Search functionality
@@ -1139,3 +1235,8 @@ window.navigateToPage = function(page) {
     targetLink.click();
   }
 };
+
+// Make functions available globally for HTML onclick events
+window.addMoneyToGoal = addMoneyToGoal;
+window.processUpload = processUpload;
+window.cancelUpload = cancelUpload;
