@@ -23,7 +23,7 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024, // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf' || 
+    if (file.mimetype === 'application/pdf' ||
         file.originalname.toLowerCase().endsWith('.pdf') ||
         file.mimetype === 'text/csv' ||
         file.originalname.toLowerCase().endsWith('.csv')) {
@@ -58,229 +58,349 @@ const db = new sqlite3.Database(dbPath, (err) => {
 // PDF Parsing Functions
 function parseEnhancedStatement(text) {
   const transactions = [];
-  const lines = text.split('\n');
-  
-  console.log('=== PARSING ATTEMPT ===');
-  console.log('Total lines to process:', lines.length);
-  
-  // Extended patterns for more banks
-  const allPatterns = [
-    // Chase patterns
-    { name: 'Chase-1', pattern: /^(\d{2}\/\d{2})\s+(.+?)\s+(\$?[\d,]+\.\d{2})$/ },
-    { name: 'Chase-2', pattern: /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d,]+\.\d{2})$/ },
-    
-    // Generic date patterns
-    { name: 'Generic-1', pattern: /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/ },
-    { name: 'Generic-2', pattern: /^(\d{1,2}-\d{1,2}-\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/ },
-    
-    // Bank of America patterns
-    { name: 'BofA-1', pattern: /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})\s*$/ },
-    { name: 'BofA-2', pattern: /^(\d{1,2}\/\d{1,2})\s+(.+?)\s+(\$[\d,]+\.\d{2})\s+(\$[\d,]+\.\d{2})$/ },
-    
-    // Wells Fargo patterns
-    { name: 'Wells-1', pattern: /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/ },
-    
-    // Capital One patterns  
-    { name: 'CapOne-1', pattern: /^(\d{4}-\d{2}-\d{2})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})$/ },
-    
-    // Discover patterns
-    { name: 'Discover-1', pattern: /^(\d{2}\/\d{2}\/\d{2})\s+(.+?)\s+(\$[\d,]+\.\d{2})$/ },
-    
-    // Generic with leading spaces
-    { name: 'Spaces-1', pattern: /^\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})\s*$/ },
-    { name: 'Spaces-2', pattern: /^\s+(\d{1,2}-\d{1,2}-\d{2,4})\s+(.+?)\s+([-+]?\$?[\d,]+\.\d{2})\s*$/ },
-    
-    // Patterns with transaction types
-    { name: 'Typed-1', pattern: /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(.+?)\s+(DEBIT|CREDIT|PAYMENT|DEPOSIT)\s+([\d,]+\.\d{2})$/i },
-    { name: 'Typed-2', pattern: /^(\d{1,2}-\d{1,2}-\d{2,4})\s+(.+?)\s+(DEBIT|CREDIT|PAYMENT|DEPOSIT)\s+([\d,]+\.\d{2})$/i },
-    
-    // Tab-separated patterns
-    { name: 'Tab-1', pattern: /^(\d{1,2}\/\d{1,2}\/\d{2,4})\t(.+?)\t([-+]?\$?[\d,]+\.\d{2})$/ },
-    { name: 'Tab-2', pattern: /^(\d{1,2}-\d{1,2}-\d{2,4})\t(.+?)\t([-+]?\$?[\d,]+\.\d{2})$/ },
-  ];
-  
-  const currentYear = new Date().getFullYear();
-  let patternMatches = {};
-  
+  const lines = text.split('\n').map(line => line.trim()); // Trim all lines
+  const datePattern = /^\d{2}\/\d{2}\/\d{2}$/; // Matches MM/DD/YY at the start of a string
+  const amountPattern = /^-?[\d,]+\.\d{2}$/; // Matches $1,234.56 or -123.45
+
+  console.log('=== PARSING BANK OF AMERICA MULTI-LINE STATEMENT ===');
+
+  let currentYear = new Date().getFullYear();
+  // Attempt to find the year from the statement period line
+  const yearMatch = text.match(/for April \d{1,2}, (\d{4}) to/);
+  if (yearMatch && yearMatch[1]) {
+    currentYear = parseInt(yearMatch[1], 10);
+    console.log(`Extracted statement year: ${currentYear}`);
+  }
+
+  // Find the start of the transaction sections
+  const depositsIndex = lines.findIndex(line => line.startsWith('Deposits and other additions'));
+  const withdrawalsIndex = lines.findIndex(line => line.startsWith('Withdrawals and other subtractions'));
+  const feesIndex = lines.findIndex(line => line.startsWith('Service fees'));
+
+  if (depositsIndex === -1 && withdrawalsIndex === -1) {
+    console.log("Could not find 'Deposits' or 'Withdrawals' section headers. Aborting.");
+    return []; // No transaction sections found
+  }
+
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line || line.length < 10) continue;
+    const line = lines[i];
     
-    console.log(`Checking line ${i + 1}: "${line}"`);
+    // Check if the line starts with a date (e.g., "05/01/25")
+    const potentialDate = line.substring(0, 8);
     
-    for (const patternObj of allPatterns) {
-      const match = line.match(patternObj.pattern);
-      if (match) {
-        console.log(`  ✅ MATCHED pattern ${patternObj.name}:`, match);
+    if (datePattern.test(potentialDate)) {
+      let description = line.substring(8).trim(); // The rest of the line is the start of the description
+      let amountStr = '';
+      
+      // Look ahead to the next lines for the rest of the description and the amount
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j];
         
-        // Track pattern usage
-        patternMatches[patternObj.name] = (patternMatches[patternObj.name] || 0) + 1;
-        
-        try {
-          let dateStr, description, amountStr, transactionType;
-          
-          if (match.length === 5) {
-            // Pattern with transaction type
-            [, dateStr, description, transactionType, amountStr] = match;
-            if (transactionType && transactionType.toUpperCase() === 'DEBIT') {
-              amountStr = '-' + amountStr;
-            }
-          } else {
-            [, dateStr, description, amountStr] = match;
-          }
-          
-          // Clean description
-          description = description.trim().replace(/\s+/g, ' ');
-          
-          // Skip headers
-          if (description.length < 3 || 
-              /^(date|description|amount|transaction|balance|total)/i.test(description)) {
-            console.log(`  ❌ Skipped header: "${description}"`);
-            continue;
-          }
-          
-          // Parse date
-          let date = parseDateString(dateStr, currentYear);
-          if (!date) {
-            console.log(`  ❌ Invalid date: "${dateStr}"`);
-            continue;
-          }
-          
-          // Parse amount
-          let amount = parseFloat(amountStr.replace(/[\$,]/g, ''));
-          if (isNaN(amount)) {
-            console.log(`  ❌ Invalid amount: "${amountStr}"`);
-            continue;
-          }
-          
-          const category = categorizeTransaction(description);
-          
-          const transaction = {
-            date,
-            description,
-            amount,
-            category,
-            pattern: patternObj.name,
-            rawLine: line
-          };
-          
-          transactions.push(transaction);
-          console.log(`  ✅ Added transaction:`, transaction);
-          
-        } catch (error) {
-          console.log(`  ❌ Error processing match:`, error.message);
+        // If the next line is an amount, we've found the end of the transaction
+        if (amountPattern.test(nextLine)) {
+          amountStr = nextLine;
+          i = j; // Move the outer loop pointer past this transaction
+          break; // Exit the inner look-ahead loop
+        } else {
+          // Otherwise, append this line to the description
+          description += ' ' + nextLine;
         }
-        break; // Stop after first match
+      }
+
+      // If we found an amount, process the transaction
+      if (amountStr) {
+        const amount = parseFloat(amountStr.replace(/,/g, ''));
+        const cleanDescription = description.replace(/\s+/g, ' ').trim(); // Clean up extra spaces
+        
+        const transaction = {
+          date: parseDateString(potentialDate, currentYear), // Use your reliable date parser
+          description: cleanDescription,
+          amount: amount,
+          category: categorizeTransaction(cleanDescription)
+        };
+        
+        transactions.push(transaction);
+        console.log('  ✅ Added transaction:', transaction);
       }
     }
   }
-  
-  console.log('=== PATTERN USAGE SUMMARY ===');
-  console.log(patternMatches);
+
   console.log(`=== FOUND ${transactions.length} TRANSACTIONS ===`);
-  
   return transactions;
 }
 
-function parseChaseStatement(text) {
+function parseChaseCreditCardStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
-  
-  // Chase credit card statement patterns
-  const transactionPatterns = [
-    // Pattern 1: MM/DD DESCRIPTION $AMOUNT
-    /^(\d{2}\/\d{2})\s+(.+?)\s+(\$?[\d,]+\.\d{2})$/,
-    // Pattern 2: MM/DD/YYYY DESCRIPTION AMOUNT
-    /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d,]+\.\d{2})$/,
-    // Pattern 3: Date Description Amount (various formats)
-    /^(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s+(.+?)\s+(-?\$?[\d,]+\.\d{2})$/
-  ];
-  
-  const currentYear = new Date().getFullYear();
-  
-  for (let i = 0; i < lines.length; i++) {
+
+  console.log('=== PARSING CHASE CREDIT CARD STATEMENT ===');
+
+  // CORRECTED NON-GREEDY PATTERN
+  const transactionPattern = /^(\d{2}\/\d{2})\s+(.+?)\s*(-?[\d,]+\.\d{2})$/;
+
+  let currentYear = new Date().getFullYear();
+  const yearMatch = text.match(/Opening\/Closing Date\s*\d{2}\/\d{2}\/(\d{2})/);
+  if (yearMatch && yearMatch[1]) {
+    const yearSuffix = parseInt(yearMatch[1], 10);
+    currentYear = (yearSuffix > 50 ? 1900 : 2000) + yearSuffix;
+    console.log(`Extracted statement year: ${currentYear}`);
+  }
+
+  const headerRegex = /Merchant\s+Name\s+or\s+Transaction\s+Description/;
+  const activityStartIndex = lines.findIndex(line => headerRegex.test(line));
+
+  if (activityStartIndex === -1) {
+    console.log(`Could not find the transaction header line. Aborting.`);
+    return [];
+  }
+
+  console.log(`Found transaction header at line ${activityStartIndex}. Starting parsing from the next line.`);
+
+  for (let i = activityStartIndex + 1; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (!line) continue;
+
+    if (line.startsWith('TOTAL') || line.length < 10) {
+      continue;
+    }
+
+    const match = line.match(transactionPattern);
+
+    if (match) {
+      let [, dateStr, description, amountStr] = match;
+      description = description.trim();
+
+      let amount = parseFloat(amountStr.replace(/,/g, ''));
+      if (description.toLowerCase().includes('payment thank you')) {
+        amount = Math.abs(amount);
+      } else {
+        amount = -Math.abs(amount);
+      }
+      
+      const transaction = {
+        date: parseDateString(dateStr, currentYear),
+        description: description,
+        amount: amount,
+        category: categorizeTransaction(description)
+      };
+
+      transactions.push(transaction);
+      console.log('  ✅ Added transaction:', transaction);
+    }
+  }
+
+  console.log(`=== FOUND ${transactions.length} TRANSACTIONS ===`);
+  return transactions;
+}
+
+
+function parseChaseCheckingStatement(text) {
+  const transactions = [];
+  const lines = text.split('\n');
+
+  console.log('=== PARSING CHASE CHECKING ACCOUNT STATEMENT (v3 - String Manipulation) ===');
+
+  let currentYear = new Date().getFullYear();
+  const yearMatch = text.match(/May \d{1,2}, (\d{4})/);
+  if (yearMatch && yearMatch[1]) {
+    currentYear = parseInt(yearMatch[1], 10);
+    console.log(`Extracted statement year: ${currentYear}`);
+  }
+
+  const header = 'DATEDESCRIPTIONAMOUNTBALANCE';
+  const activityStartIndex = lines.findIndex(line => line.includes(header));
+
+  if (activityStartIndex === -1) {
+    console.log(`Could not find the transaction header: "${header}". Aborting.`);
+    return [];
+  }
+
+  console.log(`Found transaction header at line ${activityStartIndex}. Starting parsing.`);
+
+  for (let i = activityStartIndex + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const datePrefixPattern = /^\d{2}\/\d{2}/;
+
+    // We only process lines that start with a date and are not the end of the list
+    if (line.startsWith('Ending Balance') || !datePrefixPattern.test(line)) {
+      continue;
+    }
+
+    try {
+      // --- START OF THE NEW STRING PARSING LOGIC ---
+
+      // 1. Find the last decimal point to locate the BALANCE
+      const lastDecimalIndex = line.lastIndexOf('.');
+      if (lastDecimalIndex === -1) continue;
+      
+      // 2. Find the start of the BALANCE number by walking backwards
+      let balanceStartIndex = lastDecimalIndex - 1;
+      while (balanceStartIndex > 0 && '0123456789,-'.includes(line[balanceStartIndex])) {
+        balanceStartIndex--;
+      }
+      balanceStartIndex++; // Move pointer back to the start of the number
+
+      // 3. Extract the line *without* the balance
+      const lineWithoutBalance = line.substring(0, balanceStartIndex).trim();
+
+      // 4. Find the last decimal point on the NEW line to locate the AMOUNT
+      const amountDecimalIndex = lineWithoutBalance.lastIndexOf('.');
+      if (amountDecimalIndex === -1) continue;
+
+      // 5. Find the start of the AMOUNT number by walking backwards
+      let amountStartIndex = amountDecimalIndex - 1;
+      while (amountStartIndex > 0 && '0123456789,-'.includes(lineWithoutBalance[amountStartIndex])) {
+        amountStartIndex--;
+      }
+      amountStartIndex++; // Move pointer back to the start of the number
+
+      // 6. Now we can reliably extract all three parts
+      const dateStr = lineWithoutBalance.substring(0, 5);
+      const amountStr = lineWithoutBalance.substring(amountStartIndex);
+      let description = lineWithoutBalance.substring(5, amountStartIndex).trim();
+
+      // --- END OF THE NEW STRING PARSING LOGIC ---
+
+      const amount = parseFloat(amountStr.replace(/,/g, ''));
+
+      // Clean up the description if it contains the transaction date
+      if (description.startsWith(dateStr)) {
+        description = description.substring(dateStr.length).trim();
+      }
+
+      const transaction = {
+        date: parseDateString(dateStr, currentYear),
+        description: description,
+        amount: amount,
+        category: categorizeTransaction(description)
+      };
+
+      transactions.push(transaction);
+      console.log('  ✅ Added Checking transaction:', transaction);
+
+    } catch (e) {
+      console.error(`  ❌ Failed to parse line: "${line}"`, e);
+    }
+  }
+
+  console.log(`=== FOUND ${transactions.length} TRANSACTIONS ===`);
+  return transactions;
+}
+
+function parseAppleCardStatement(text) {
+  console.log('=== PARSING APPLE CARD PDF STATEMENT ===');
+  const transactions = [];
+
+  // Use indexOf to find the start of our key sections. This is more reliable than line-by-line.
+  const paymentsIndex = text.indexOf('Payments\nDateDescriptionAmount');
+  const transactionsIndex = text.indexOf('Transactions\nDateDescriptionDaily CashAmount');
+  const interestIndex = text.indexOf('Interest Charged');
+
+  if (transactionsIndex === -1) {
+    console.error('Could not find the "Transactions" section header. Aborting.');
+    return [];
+  }
+
+  // --- 1. PARSE THE "TRANSACTIONS" (PURCHASES) SECTION ---
+  const transactionsText = text.substring(transactionsIndex, interestIndex);
+  
+  // This regex is designed for the Apple Card format:
+  // Group 1: Date (MM/DD/YYYY)
+  // Group 2: Description (everything up to the Daily Cash %)
+  // Group 3: The actual transaction amount at the end of the line
+  const transactionPattern = /^(\d{2}\/\d{2}\/\d{4})(.+?)\s*\d+%\s*\$[\d,.]+\s*\$([\d,]+\.\d{2})\s*$/gm;
+
+  let match;
+  while ((match = transactionPattern.exec(transactionsText)) !== null) {
+    try {
+      const date = parseDateString(match[1]);
+      // Clean up description: remove daily cash % and amount, then trim.
+      const description = match[2].trim();
+      const amountStr = match[3];
+      
+      // Purchases on a credit card statement are positive, but for our app, they are expenses (negative).
+      const amount = -Math.abs(parseFloat(amountStr.replace(/,/g, '')));
+
+      if (date && description && !isNaN(amount)) {
+        transactions.push({
+          date,
+          description,
+          amount,
+          category: categorizeTransaction(description),
+        });
+      }
+    } catch (e) {
+      console.error('Error parsing Apple Card transaction line:', match[0], e);
+    }
+  }
+
+  // --- 2. PARSE THE "PAYMENTS" SECTION ---
+  if (paymentsIndex !== -1) {
+    // Isolate the payment text block
+    const paymentsText = text.substring(paymentsIndex, transactionsIndex);
     
-    for (const pattern of transactionPatterns) {
-      const match = line.match(pattern);
-      if (match) {
-        try {
-          let [, dateStr, description, amountStr] = match;
-          
-          // Clean up description
-          description = description.trim().replace(/\s+/g, ' ');
-          
-          // Skip if description is too short or looks like a header
-          if (description.length < 3 || 
-              description.toUpperCase().includes('TRANSACTION') ||
-              description.toUpperCase().includes('DESCRIPTION') ||
-              description.toUpperCase().includes('AMOUNT')) {
-            continue;
-          }
-          
-          // Parse date
-          let date = parseDateString(dateStr, currentYear);
-          if (!date) continue;
-          
-          // Parse amount
-          let amount = parseFloat(amountStr.replace(/[\$,]/g, ''));
-          
-          // For credit cards, purchases are typically negative
-          if (amount > 0) {
-            amount = -amount;
-          }
-          
-          // Categorize transaction
-          const category = categorizeTransaction(description);
-          
-          // Validate transaction
-          if (date && description && !isNaN(amount) && Math.abs(amount) > 0.01) {
-            transactions.push({
-              date,
-              description,
-              amount,
-              category
-            });
-          }
-        } catch (error) {
-          console.log(`Error parsing line: ${line}`, error);
+    // This regex handles payments where the amount might be on a new line.
+    // Group 1: Date (MM/DD/YYYY)
+    // Group 2: Description (can include newlines)
+    // Group 3: The payment amount (which is negative in the PDF)
+    const paymentPattern = /(\d{2}\/\d{2}\/\d{4})([\s\S]+?)(-\$[\d,]+\.\d{2})/g;
+
+    while ((match = paymentPattern.exec(paymentsText)) !== null) {
+      try {
+        const date = parseDateString(match[1]);
+        // Clean up description: remove "DateDescriptionAmount" header and trim newlines/spaces.
+        const description = match[2].replace('DateDescriptionAmount','').replace(/\n/g, ' ').trim();
+        const amountStr = match[3];
+
+        // Payments are negative in the PDF, but for our app, they are credits (positive).
+        const amount = Math.abs(parseFloat(amountStr.replace(/[,\$-]/g, '')));
+
+        if (date && description && !isNaN(amount)) {
+          transactions.push({
+            date,
+            description,
+            amount,
+            category: 'Income', // Payments are categorized as Income/Transfer
+          });
         }
-        break;
+      } catch (e) {
+        console.error('Error parsing Apple Card payment line:', match[0], e);
       }
     }
   }
   
+  console.log(`Found ${transactions.length} transactions in Apple Card statement.`);
   return transactions;
 }
+
+
 
 function parseCSVStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
-  
+
   // Skip header row and process data
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
-    
+
     // Parse CSV (handle quoted fields)
     const fields = parseCSVLine(line);
-    
+
     if (fields.length >= 3) {
       try {
         // Common CSV formats:
         // Date, Description, Amount
         // Date, Description, Debit, Credit
         // Transaction Date, Description, Amount
-        
+
         let date, description, amount;
-        
+
         // Try to identify date column (usually first)
         date = parseDateString(fields[0]);
-        
+
         // Description is usually second column
         description = fields[1] ? fields[1].trim().replace(/"/g, '') : '';
-        
+
         // Amount handling
         if (fields.length === 3) {
           // Date, Description, Amount
@@ -291,7 +411,7 @@ function parseCSVStatement(text) {
           const credit = parseFloat(fields[3].replace(/[\$,]/g, '') || '0');
           amount = credit - debit;
         }
-        
+
         if (date && description && !isNaN(amount) && Math.abs(amount) > 0.01) {
           transactions.push({
             date,
@@ -305,18 +425,223 @@ function parseCSVStatement(text) {
       }
     }
   }
-  
+
   return transactions;
 }
+
+function parseChaseCheckingCSV(text) {
+  console.log('=== PARSING CHASE CHECKING CSV ===');
+  const transactions = [];
+  const lines = text.split('\n');
+  if (lines.length < 2) return []; // Need at least a header and one data line
+
+  // Dynamically find the column indexes from the header row.
+  // This is robust even if Chase changes the column order in the future.
+  const header = parseCSVLine(lines[0].toLowerCase());
+  const columnMap = {
+    date: header.indexOf('posting date'),
+    description: header.indexOf('description'),
+    amount: header.indexOf('amount'),
+    type: header.indexOf('type') // Useful for categorization
+  };
+
+  // Check if all required columns were found
+  if (columnMap.date === -1 || columnMap.description === -1 || columnMap.amount === -1) {
+    console.error('Chase CSV is missing required columns: "posting date", "description", or "amount".');
+    return [];
+  }
+
+  // Start from the first data row (i=1)
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const fields = parseCSVLine(line);
+    // Ensure the line has enough columns to avoid errors
+    if (fields.length <= Math.max(columnMap.date, columnMap.description, columnMap.amount)) continue;
+
+    try {
+      const dateStr = fields[columnMap.date];
+      const description = fields[columnMap.description];
+      const amountStr = fields[columnMap.amount];
+      
+      const date = parseDateString(dateStr);
+      const amount = parseFloat(amountStr);
+
+      // Final validation to ensure we have good data
+      if (date && description && !isNaN(amount)) {
+        transactions.push({
+          date,
+          description,
+          amount,
+          // For a checking account, the sign is already correct. No flipping needed.
+          category: categorizeTransaction(description)
+        });
+      }
+    } catch (error) {
+      console.log(`Error parsing Chase CSV line: ${line}`, error);
+    }
+  }
+
+  console.log(`Found ${transactions.length} transactions in Chase CSV.`);
+  return transactions;
+}
+
+function parseChaseCreditCardCSV(text) {
+  console.log('=== PARSING CHASE CREDIT CARD CSV ===');
+  const transactions = [];
+  const lines = text.split('\n');
+  if (lines.length < 2) return [];
+
+  const header = parseCSVLine(lines[0].toLowerCase());
+  const columnMap = {
+    // We'll use "post date" as it's more reliable than "transaction date"
+    date: header.indexOf('post date'),
+    description: header.indexOf('description'),
+    amount: header.indexOf('amount'),
+    type: header.indexOf('type')
+  };
+
+  if (columnMap.date === -1 || columnMap.description === -1 || columnMap.amount === -1) {
+    console.error('Chase Credit Card CSV is missing required columns: "post date", "description", or "amount".');
+    return [];
+  }
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const fields = parseCSVLine(line);
+    if (fields.length <= Math.max(columnMap.date, columnMap.description, columnMap.amount)) continue;
+
+    try {
+      const dateStr = fields[columnMap.date];
+      const description = fields[columnMap.description];
+      const amountStr = fields[columnMap.amount];
+      
+      const date = parseDateString(dateStr);
+      const amount = parseFloat(amountStr);
+
+      if (date && description && !isNaN(amount)) {
+        transactions.push({
+          date,
+          description,
+          amount,
+          // The signs in this CSV are already correct for our app's logic!
+          // A Sale is negative, a Payment/Return is positive. No flipping needed.
+          category: categorizeTransaction(description)
+        });
+      }
+    } catch (error) {
+      console.log(`Error parsing Chase Credit Card CSV line: ${line}`, error);
+    }
+  }
+
+  console.log(`Found ${transactions.length} transactions in Chase Credit Card CSV.`);
+  return transactions;
+}
+
+function parseBofACreditCardCSV(text) {
+  console.log('=== PARSING BANK OF AMERICA CREDIT CARD CSV (v3 - Robust) ===');
+  const transactions = [];
+  const lines = text.split('\n');
+  if (lines.length < 2) return [];
+
+  // --- START OF NEW ROBUST LOGIC ---
+
+  // Helper function to find a column index using a list of possible names
+  const findColumnIndex = (header, aliases) => {
+    for (const alias of aliases) {
+      const index = header.indexOf(alias);
+      if (index !== -1) {
+        return index;
+      }
+    }
+    return -1; // Not found
+  };
+
+  // 1. Find the actual header row, skipping summary lines.
+  let headerIndex = -1;
+  let header = [];
+  for (let i = 0; i < lines.length; i++) {
+    // A reliable way to identify the header is by checking for key columns.
+    const potentialHeader = parseCSVLine(lines[i].toLowerCase());
+    // Check if it looks like a valid header (contains date, description, and amount-like fields)
+    if (findColumnIndex(potentialHeader, ['posted date', 'date']) !== -1 &&
+        findColumnIndex(potentialHeader, ['payee', 'description']) !== -1 &&
+        findColumnIndex(potentialHeader, ['amount']) !== -1) 
+    {
+      headerIndex = i;
+      header = potentialHeader;
+      console.log('Found header row at index:', headerIndex, 'with columns:', header);
+      break;
+    }
+  }
+
+  if (headerIndex === -1) {
+    console.error('Could not find a valid header row in the BofA CSV. Searched for date, payee/description, and amount columns.');
+    return [];
+  }
+
+  // 2. Map the columns using our flexible alias search.
+  const columnMap = {
+    date: findColumnIndex(header, ['posted date', 'date']),
+    description: findColumnIndex(header, ['payee', 'description']),
+    amount: findColumnIndex(header, ['amount'])
+  };
+
+  if (columnMap.date === -1 || columnMap.description === -1 || columnMap.amount === -1) {
+    console.error('BofA Credit Card CSV is missing required columns. Mapped Columns:', columnMap);
+    return [];
+  }
+
+  // 3. Start parsing from the line *after* the header.
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const fields = parseCSVLine(line);
+    // Ensure we have enough data fields to prevent errors
+    if (fields.length <= Math.max(columnMap.date, columnMap.description, columnMap.amount)) continue;
+
+    try {
+      const dateStr = fields[columnMap.date];
+      const description = fields[columnMap.description];
+      const amountStr = fields[columnMap.amount];
+      
+      const date = parseDateString(dateStr);
+      const amount = parseFloat(amountStr);
+
+      // Final validation to ensure we parsed valid data
+      if (date && description && !isNaN(amount)) {
+        transactions.push({
+          date,
+          description,
+          amount,
+          // BofA credit card CSVs have correct signs: payments are positive, purchases are negative.
+          category: categorizeTransaction(description)
+        });
+      }
+    } catch (error) {
+      console.error(`Error parsing BofA Credit Card CSV line: "${line}"`, error);
+    }
+  }
+  // --- END OF NEW ROBUST LOGIC ---
+
+  console.log(`Found ${transactions.length} transactions in BofA Credit Card CSV.`);
+  return transactions;
+}
+
+
 
 function parseCSVLine(line) {
   const fields = [];
   let current = '';
   let inQuotes = false;
-  
+
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
-    
+
     if (char === '"') {
       inQuotes = !inQuotes;
     } else if (char === ',' && !inQuotes) {
@@ -326,7 +651,7 @@ function parseCSVLine(line) {
       current += char;
     }
   }
-  
+
   fields.push(current.trim());
   return fields;
 }
@@ -335,7 +660,7 @@ function parseCSVLine(line) {
 function parseGenericStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
-  
+
   // More generic patterns for different bank formats
   const transactionPatterns = [
     // Pattern for: Date Description Amount
@@ -347,19 +672,19 @@ function parseGenericStatement(text) {
     // Pattern for: Date Description Credit/Debit Amount
     /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+?)\s+(DEBIT|CREDIT)\s+([\d,]+\.\d{2})$/i
   ];
-  
+
   const currentYear = new Date().getFullYear();
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line || line.length < 10) continue;
-    
+
     for (const pattern of transactionPatterns) {
       const match = line.match(pattern);
       if (match) {
         try {
           let dateStr, description, amountStr, transactionType;
-          
+
           if (match.length === 5) {
             // Pattern with DEBIT/CREDIT
             [, dateStr, description, transactionType, amountStr] = match;
@@ -369,34 +694,34 @@ function parseGenericStatement(text) {
           } else {
             [, dateStr, description, amountStr] = match;
           }
-          
+
           // Clean up description
           description = description.trim().replace(/\s+/g, ' ');
-          
+
           // Skip obvious headers or invalid descriptions
-          if (description.length < 3 || 
+          if (description.length < 3 ||
               /^(date|description|amount|transaction|balance)/i.test(description)) {
             continue;
           }
-          
+
           // Parse date with better year handling
           let date = parseDateString(dateStr, currentYear);
           if (!date) continue;
-          
+
           // Parse amount
           let amount = parseFloat(amountStr.replace(/[\$,]/g, ''));
           if (isNaN(amount)) continue;
-          
+
           // Categorize transaction
           const category = categorizeTransaction(description);
-          
+
           transactions.push({
             date,
             description,
             amount,
             category
           });
-          
+
         } catch (error) {
           console.log(`Error parsing line: ${line}`, error);
         }
@@ -404,17 +729,17 @@ function parseGenericStatement(text) {
       }
     }
   }
-  
+
   return transactions;
 }
 
 // Helper function to parse date strings more reliably
 function parseDateString(dateStr, currentYear = new Date().getFullYear()) {
   if (!dateStr) return null;
-  
+
   // Remove quotes and clean up
   dateStr = dateStr.replace(/"/g, '').trim();
-  
+
   // Try various date formats
   const formats = [
     /^(\d{4})-(\d{2})-(\d{2})$/, // YYYY-MM-DD
@@ -425,13 +750,13 @@ function parseDateString(dateStr, currentYear = new Date().getFullYear()) {
     /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/, // MM/DD/YY or M/D/YY
     /^(\d{1,2})[\/\-](\d{1,2})$/ // MM/DD or M/D
   ];
-  
+
   for (const format of formats) {
     const match = dateStr.match(format);
     if (match) {
       let [, p1, p2, p3] = match;
       let year, month, day;
-      
+
       // Handle different formats
       if (format.source.includes('(\\d{4})')) {
         if (format.source.startsWith('^(\\d{4})')) {
@@ -456,7 +781,7 @@ function parseDateString(dateStr, currentYear = new Date().getFullYear()) {
         day = p2;
         year = currentYear;
       }
-      
+
       // Create date and validate
       const date = new Date(year, month - 1, day);
       if (date.getMonth() === month - 1 && date.getDate() == day) {
@@ -464,13 +789,13 @@ function parseDateString(dateStr, currentYear = new Date().getFullYear()) {
       }
     }
   }
-  
+
   return null;
 }
 
 function categorizeTransaction(description) {
   const desc = description.toLowerCase();
-  
+
   // Food & Dining
   if (desc.includes('restaurant') || desc.includes('cafe') || desc.includes('coffee') ||
       desc.includes('mcdonald') || desc.includes('burger') || desc.includes('pizza') ||
@@ -479,7 +804,7 @@ function categorizeTransaction(description) {
       desc.includes('supermarket') || desc.includes('safeway') || desc.includes('kroger')) {
     return 'Food & Dining';
   }
-  
+
   // Transportation
   if (desc.includes('gas ') || desc.includes('fuel') || desc.includes('uber') ||
       desc.includes('lyft') || desc.includes('taxi') || desc.includes('parking') ||
@@ -487,40 +812,40 @@ function categorizeTransaction(description) {
       desc.includes('car wash') || desc.includes('auto ')) {
     return 'Transportation';
   }
-  
+
   // Shopping
   if (desc.includes('amazon') || desc.includes('walmart') || desc.includes('target') ||
       desc.includes('mall ') || desc.includes('store') || desc.includes('shop') ||
       desc.includes('retail') || desc.includes('clothing') || desc.includes('fashion')) {
     return 'Shopping';
   }
-  
+
   // Bills & Utilities
   if (desc.includes('electric') || desc.includes('utility') || desc.includes('water') ||
       desc.includes('internet') || desc.includes('phone') || desc.includes('cable') ||
       desc.includes('insurance') || desc.includes('mortgage') || desc.includes('rent')) {
     return 'Bills & Utilities';
   }
-  
+
   // Entertainment
   if (desc.includes('netflix') || desc.includes('spotify') || desc.includes('movie') ||
       desc.includes('theater') || desc.includes('gaming') || desc.includes('subscription') ||
       desc.includes('entertainment') || desc.includes('music')) {
     return 'Entertainment';
   }
-  
+
   // Healthcare
   if (desc.includes('pharmacy') || desc.includes('doctor') || desc.includes('medical') ||
       desc.includes('hospital') || desc.includes('health') || desc.includes('dental')) {
     return 'Healthcare';
   }
-  
+
   // Income (payments, deposits)
   if (desc.includes('payment') || desc.includes('deposit') || desc.includes('salary') ||
       desc.includes('payroll') || desc.includes('refund') || desc.includes('credit')) {
     return 'Income';
   }
-  
+
   // Default category
   return 'Shopping';
 }
@@ -531,60 +856,109 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    
+
     const { originalname, buffer, mimetype } = req.file;
     let transactions = [];
-    
-    console.log(`Processing file: ${originalname}, size: ${buffer.length} bytes, type: ${mimetype}`);
-    
-    if (mimetype === 'application/pdf' || originalname.toLowerCase().endsWith('.pdf')) {
-      // Parse PDF
-      try {
-        const data = await pdf(buffer);
-        const text = data.text;
-        
-        console.log('PDF text extracted, length:', text.length);
-        console.log('First 1000 chars:', text.substring(0, 1000));
-          transactions = parseEnhancedStatement(text);
-        console.log(`Enhanced parser found ${transactions.length} transactions`);
 
-        if (transactions.length === 0) {
-          console.log('=== NO TRANSACTIONS FOUND - TRYING FALLBACK ===');
-          transactions = parseGenericStatement(text);
-          console.log(`Fallback parser found ${transactions.length} transactions`);
-        }
-        
-      } catch (pdfError) {
+    console.log(`Processing file: ${originalname}, size: ${buffer.length} bytes, type: ${mimetype}`);
+
+    if (mimetype === 'application/pdf' || originalname.toLowerCase().endsWith('.pdf')) {
+        // Parse PDF
+        try {
+          const data = await pdf(buffer);
+          const text = data.text;
+          const lowerCaseText = text.toLowerCase();
+
+          console.log('PDF text extracted, length:', text.length);
+          
+          // --- NEW, MASTER PDF CONTROLLER LOGIC ---
+
+          // Attempt to identify the bank and use the correct parser
+          if (lowerCaseText.includes('apple card') && lowerCaseText.includes('goldman sachs')) {
+              console.log('Detected Apple Card statement. Using Apple Card parser.');
+              transactions = parseAppleCardStatement(text);
+          } else if (lowerCaseText.includes('bank of america')) {
+              console.log('Detected Bank of America statement. Using BofA parser.');
+              transactions = parseEnhancedStatement(text);
+          } else if (lowerCaseText.includes('chase') && lowerCaseText.includes('checking summary')) {
+              console.log('Detected Chase Checking statement. Using Chase Checking parser.');
+              transactions = parseChaseCheckingStatement(text);
+          } else if (lowerCaseText.includes('chase')) {
+              console.log('Detected Chase Credit Card statement. Using Chase Credit Card parser.');
+              transactions = parseChaseCreditCardStatement(text);
+          }
+
+          // If no bank-specific parser worked, try the generic one as a fallback
+          if (transactions.length === 0) {
+            console.log('Bank-specific parser found no transactions. Trying generic fallback...');
+            transactions = parseGenericStatement(text);
+            console.log(`Generic fallback parser found ${transactions.length} transactions`);
+          }
+          
+        } catch (pdfError) {
         console.error('PDF parsing error:', pdfError);
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Failed to parse PDF file. Please ensure it\'s a text-based PDF (not scanned image).',
-          details: pdfError.message 
+          details: pdfError.message
         });
       }
-      
+
     } else if (mimetype === 'text/csv' || originalname.toLowerCase().endsWith('.csv')) {
       // Parse CSV
       try {
-        const text = buffer.toString('utf-8');
+        let text = buffer.toString('utf-8'); // Use 'let' so we can modify it
+
+        // --- FIX: REMOVE THE BYTE ORDER MARK (BOM) ---
+        // Some bank CSVs (especially from Windows) start with this invisible character,
+        // which breaks header matching. This removes it if it exists.
+        if (text.charCodeAt(0) === 0xFEFF) {
+          console.log('Detected and removed BOM from CSV file.');
+          text = text.substring(1);
+        }
+        // --- END OF FIX ---
+
         console.log('CSV content preview:', text.substring(0, 500));
-        
-        transactions = parseCSVStatement(text);
-        console.log(`Extracted ${transactions.length} transactions from CSV`);
+        const lowerCaseText = text.toLowerCase();
+
+        // The rest of your logic for detecting which parser to use stays the same.
+        // It will now work correctly because the BOM is gone.
+
+        // Check for Bank of America Credit Card CSV (most specific headers)
+        if (lowerCaseText.includes('posted date') && lowerCaseText.includes('reference number') && lowerCaseText.includes('payee')) {
+          console.log('Detected Bank of America Credit Card CSV. Using specialized parser.');
+          transactions = parseBofACreditCardCSV(text);
+
+        // Check for Chase Credit Card CSV
+        } else if (lowerCaseText.includes('transaction date') && lowerCaseText.includes('category') && lowerCaseText.includes('post date')) {
+          console.log('Detected Chase Credit Card CSV. Using specialized parser.');
+          transactions = parseChaseCreditCardCSV(text);
+
+        // Check for Chase Checking CSV
+        } else if (lowerCaseText.includes('posting date') && lowerCaseText.includes('check or slip')) {
+          console.log('Detected Chase Checking CSV. Using specialized parser.');
+          transactions = parseChaseCheckingCSV(text);
+
+        // Fallback for any other CSV format
+        } else {
+          console.log('Using generic CSV parser.');
+          transactions = parseCSVStatement(text);
+        }
+
       } catch (csvError) {
         console.error('CSV parsing error:', csvError);
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Failed to parse CSV file. Please check the file format.',
-          details: csvError.message 
+          details: csvError.message
         });
       }
     } else {
-      return res.status(400).json({ 
-        error: 'Unsupported file format. Please upload PDF or CSV files only.' 
+      return res.status(400).json({
+        error: 'Unsupported file format. Please upload PDF or CSV files only.'
       });
     }
-    
+
     if (transactions.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'No transactions found in the file. Please check if this is a bank statement with transaction data.',
         debug: {
           fileName: originalname,
@@ -593,7 +967,7 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
         }
       });
     }
-    
+
     // Return transactions for preview
     res.json({
       message: `Found ${transactions.length} transactions`,
@@ -602,12 +976,12 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
       fileName: originalname,
       fileType: mimetype
     });
-    
+
   } catch (error) {
     console.error('Upload processing error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to process file: ' + error.message,
-      details: error.stack 
+      details: error.stack
     });
   }
 });
@@ -618,14 +992,14 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
-    
+
     const { originalname, buffer, mimetype } = req.file;
-    
+
     if (mimetype === 'application/pdf' || originalname.toLowerCase().endsWith('.pdf')) {
       try {
         const data = await pdf(buffer);
         const text = data.text;
-        
+
         console.log('=== PDF DEBUG INFO ===');
         console.log('File:', originalname);
         console.log('Size:', buffer.length, 'bytes');
@@ -633,7 +1007,7 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
         console.log('=== FULL EXTRACTED TEXT ===');
         console.log(text);
         console.log('=== END TEXT ===');
-        
+
         // Split into lines and show structure
         const lines = text.split('\n');
         console.log('=== LINE BY LINE ===');
@@ -643,7 +1017,7 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
           }
         });
         console.log('=== END LINES ===');
-        
+
         res.json({
           fileName: originalname,
           textLength: text.length,
@@ -652,7 +1026,7 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
           firstLinesPreview: lines.slice(0, 20).filter(l => l.trim()),
           fullText: text // WARNING: This could be large
         });
-        
+
       } catch (pdfError) {
         console.error('PDF parsing error:', pdfError);
         res.status(400).json({ error: 'Failed to parse PDF', details: pdfError.message });
@@ -660,7 +1034,7 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
     } else {
       res.status(400).json({ error: 'Only PDF files supported for debug' });
     }
-    
+
   } catch (error) {
     console.error('Debug endpoint error:', error);
     res.status(500).json({ error: 'Debug failed: ' + error.message });
@@ -670,32 +1044,32 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
 // Improved import transactions endpoint
 app.post('/api/import-transactions', (req, res) => {
   const { transactions, accountName } = req.body;
-  
+
   if (!transactions || !Array.isArray(transactions)) {
     return res.status(400).json({ error: 'Invalid transactions data' });
   }
-  
+
   if (!accountName) {
     return res.status(400).json({ error: 'Account name is required' });
   }
-  
+
   console.log(`Importing ${transactions.length} transactions to account: ${accountName}`);
-  
+
   let importedCount = 0;
   let errors = [];
   let processed = 0;
-  
+
   // Process each transaction
   const processTransaction = (transaction, index) => {
     return new Promise((resolve) => {
       const { date, description, amount, category } = transaction;
-      
+
       if (!date || !description || amount === undefined || !category) {
         errors.push(`Transaction ${index + 1}: Missing required fields (date, description, amount, or category)`);
         resolve();
         return;
       }
-      
+
       // Validate date format
       const parsedDate = new Date(date);
       if (isNaN(parsedDate.getTime())) {
@@ -703,7 +1077,7 @@ app.post('/api/import-transactions', (req, res) => {
         resolve();
         return;
       }
-      
+
       // Validate amount
       const numericAmount = parseFloat(amount);
       if (isNaN(numericAmount)) {
@@ -711,7 +1085,7 @@ app.post('/api/import-transactions', (req, res) => {
         resolve();
         return;
       }
-      
+
       db.run("INSERT INTO transactions (date, description, amount, category, account_name) VALUES (?, ?, ?, ?, ?)",
         [date, description, numericAmount, category, accountName], function(err) {
         if (err) {
@@ -719,20 +1093,20 @@ app.post('/api/import-transactions', (req, res) => {
           errors.push(`Transaction ${index + 1}: Database error - ${err.message}`);
         } else {
           importedCount++;
-          
+
           // Update account balance if account exists
           db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?", [numericAmount, accountName], (updateErr) => {
             if (updateErr) {
               console.error('Error updating account balance:', updateErr);
             }
           });
-          
+
           // Update budget if expense (negative amount)
           if (numericAmount < 0) {
-            db.run(`UPDATE budgets SET 
-              spent = spent + ?, 
-              remaining = budgeted - spent 
-              WHERE category = ?`, 
+            db.run(`UPDATE budgets SET
+              spent = spent + ?,
+              remaining = budgeted - spent
+              WHERE category = ?`,
               [Math.abs(numericAmount), category], (budgetErr) => {
               if (budgetErr) {
                 console.error('Error updating budget:', budgetErr);
@@ -740,17 +1114,17 @@ app.post('/api/import-transactions', (req, res) => {
             });
           }
         }
-        
+
         processed++;
         resolve();
       });
     });
   };
-  
+
   // Process all transactions
   Promise.all(transactions.map(processTransaction)).then(() => {
     console.log(`Import complete: ${importedCount}/${transactions.length} transactions imported`);
-    
+
     res.json({
       message: `Successfully imported ${importedCount} out of ${transactions.length} transactions`,
       importedCount,
@@ -822,7 +1196,7 @@ app.get('/admin', (req, res) => {
 <body>
     <div class="container">
         <h1>🏦 FinanceFlow Pro - Data Management</h1>
-        
+
         <div class="info">
             <strong>📍 Current Status:</strong> Connected to API with PDF parsing support
         </div>
@@ -858,23 +1232,23 @@ app.get('/admin', (req, res) => {
         async function testUpload() {
             const fileInput = document.getElementById('testFile');
             const resultDiv = document.getElementById('uploadResult');
-            
+
             if (!fileInput.files[0]) {
                 showStatus('Please select a file first', 'error');
                 return;
             }
-            
+
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
-            
+
             try {
                 const response = await fetch(\`\${API_BASE}/upload-statement\`, {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 const result = await response.json();
-                
+
                 if (response.ok) {
                     resultDiv.innerHTML = \`
                         <div style="background: #dff0d8; padding: 10px; border-radius: 5px;">
@@ -937,7 +1311,7 @@ app.get('/admin', (req, res) => {
     </script>
 </body>
 </html>`;
-  
+
   res.send(adminHtml);
 });
 
@@ -1035,7 +1409,7 @@ app.post('/api/admin/clear-all-data', (req, res) => {
     db.run("DELETE FROM budgets");
     db.run("DELETE FROM goals");
     db.run("DELETE FROM investments");
-    
+
     res.json({ message: "All data cleared successfully" });
     console.log('All data cleared by admin');
   });
@@ -1049,7 +1423,7 @@ app.post('/api/admin/reset-to-sample', (req, res) => {
     db.run("DELETE FROM budgets");
     db.run("DELETE FROM goals");
     db.run("DELETE FROM investments");
-    
+
     // Re-insert sample data
     setTimeout(() => {
       insertSampleData();
@@ -1073,7 +1447,7 @@ app.get('/api/accounts', (req, res) => {
 
 app.post('/api/accounts', (req, res) => {
   const { name, type, balance, institution } = req.body;
-  
+
   if (!name || !type || balance === undefined || !institution) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1126,7 +1500,7 @@ app.get('/api/transactions', (req, res) => {
 
 app.post('/api/transactions', (req, res) => {
   const { date, description, amount, category, account_name } = req.body;
-  
+
   if (!date || !description || amount === undefined || !category || !account_name) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1144,20 +1518,20 @@ app.post('/api/transactions', (req, res) => {
           console.error('Error updating account balance:', updateErr);
         }
       });
-      
+
       // Update budget spent amount if it's an expense
       if (balanceChange < 0) {
-        db.run(`UPDATE budgets SET 
-          spent = spent + ?, 
-          remaining = budgeted - spent 
-          WHERE category = ?`, 
+        db.run(`UPDATE budgets SET
+          spent = spent + ?,
+          remaining = budgeted - spent
+          WHERE category = ?`,
           [Math.abs(balanceChange), category], (budgetErr) => {
           if (budgetErr) {
             console.error('Error updating budget:', budgetErr);
           }
         });
       }
-      
+
       res.json({ id: this.lastID, message: "Transaction added successfully" });
     }
   });
@@ -1166,7 +1540,7 @@ app.post('/api/transactions', (req, res) => {
 app.put('/api/transactions/:id', (req, res) => {
   const { id } = req.params;
   const { date, description, amount, category, account_name } = req.body;
-  
+
   if (!date || !description || amount === undefined || !category || !account_name) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1190,7 +1564,7 @@ app.put('/api/transactions/:id', (req, res) => {
         res.status(500).json({ error: updateErr.message });
       } else {
         // Reverse old account balance effect
-        db.run("UPDATE accounts SET balance = balance - ? WHERE name = ?", 
+        db.run("UPDATE accounts SET balance = balance - ? WHERE name = ?",
           [oldTransaction.amount, oldTransaction.account_name], (reverseErr) => {
           if (reverseErr) {
             console.error('Error reversing old account balance:', reverseErr);
@@ -1198,7 +1572,7 @@ app.put('/api/transactions/:id', (req, res) => {
         });
 
         // Apply new account balance effect
-        db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?", 
+        db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?",
           [parseFloat(amount), account_name], (newErr) => {
           if (newErr) {
             console.error('Error applying new account balance:', newErr);
@@ -1213,14 +1587,14 @@ app.put('/api/transactions/:id', (req, res) => {
 
 app.delete('/api/transactions/:id', (req, res) => {
   const { id } = req.params;
-  
+
   // First get the transaction to reverse account balance
   db.get("SELECT * FROM transactions WHERE id = ?", [id], (err, transaction) => {
     if (err) {
       console.error('Error fetching transaction for deletion:', err);
       return res.status(500).json({ error: err.message });
     }
-    
+
     if (!transaction) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
@@ -1232,13 +1606,13 @@ app.delete('/api/transactions/:id', (req, res) => {
         res.status(500).json({ error: deleteErr.message });
       } else {
         // Reverse the account balance change
-        db.run("UPDATE accounts SET balance = balance - ? WHERE name = ?", 
+        db.run("UPDATE accounts SET balance = balance - ? WHERE name = ?",
           [transaction.amount, transaction.account_name], (updateErr) => {
           if (updateErr) {
             console.error('Error reversing account balance:', updateErr);
           }
         });
-        
+
         res.json({ message: "Transaction deleted successfully" });
       }
     });
@@ -1248,7 +1622,7 @@ app.delete('/api/transactions/:id', (req, res) => {
 // Dashboard summary
 app.get('/api/dashboard', (req, res) => {
   const summary = {};
-  
+
   // Get total balance
   db.get("SELECT SUM(balance) as total_balance FROM accounts", (err, row) => {
     if (err) {
@@ -1256,24 +1630,24 @@ app.get('/api/dashboard', (req, res) => {
       res.status(500).json({ error: err.message });
     } else {
       summary.total_balance = row.total_balance || 0;
-      
+
       // Get recent transactions for expense calculation
       db.all("SELECT SUM(amount) as total_expenses FROM transactions WHERE amount < 0 AND date >= date('now', '-30 days')", (expenseErr, expenseRow) => {
         if (expenseErr) {
           console.error('Error calculating expenses:', expenseErr);
         }
-        
+
         // Get recent income
         db.all("SELECT SUM(amount) as total_income FROM transactions WHERE amount > 0 AND date >= date('now', '-30 days')", (incomeErr, incomeRow) => {
           if (incomeErr) {
             console.error('Error calculating income:', incomeErr);
           }
-          
+
           const monthlyExpenses = Math.abs(expenseRow?.[0]?.total_expenses || 0);
           const monthlyIncome = incomeRow?.[0]?.total_income || 0;
           const savingsAmount = monthlyIncome - monthlyExpenses;
           const savingsRate = monthlyIncome > 0 ? ((savingsAmount / monthlyIncome) * 100) : 0;
-          
+
           // Simulated monthly data for charts (you can customize this)
           const monthlyData = [
             {month: "Jul", income: 3200, expenses: 2600, savings: 600},
@@ -1283,12 +1657,12 @@ app.get('/api/dashboard', (req, res) => {
             {month: "Nov", income: 3200, expenses: 2700, savings: 500},
             {month: "Dec", income: monthlyIncome || 3200, expenses: monthlyExpenses || 2600, savings: savingsAmount || 600}
           ];
-          
+
           summary.monthly_data = monthlyData;
           summary.monthly_income = monthlyIncome || 3200;
           summary.monthly_expenses = monthlyExpenses || 2600;
           summary.savings_rate = Math.round(savingsRate * 10) / 10; // Round to 1 decimal
-          
+
           res.json(summary);
         });
       });
@@ -1310,7 +1684,7 @@ app.get('/api/budgets', (req, res) => {
 
 app.post('/api/budgets', (req, res) => {
   const { category, budgeted } = req.body;
-  
+
   if (!category || budgeted === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1340,7 +1714,7 @@ app.get('/api/goals', (req, res) => {
 
 app.post('/api/goals', (req, res) => {
   const { name, target, current, deadline } = req.body;
-  
+
   if (!name || target === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1359,7 +1733,7 @@ app.post('/api/goals', (req, res) => {
 app.put('/api/goals/:id', (req, res) => {
   const { id } = req.params;
   const { current } = req.body;
-  
+
   if (current === undefined) {
     return res.status(400).json({ error: 'Current amount is required' });
   }
@@ -1376,7 +1750,7 @@ app.put('/api/goals/:id', (req, res) => {
 
 app.delete('/api/goals/:id', (req, res) => {
   const { id } = req.params;
-  
+
   db.run("DELETE FROM goals WHERE id = ?", [id], function(err) {
     if (err) {
       console.error('Error deleting goal:', err);
@@ -1401,7 +1775,7 @@ app.get('/api/investments', (req, res) => {
 
 app.post('/api/investments', (req, res) => {
   const { symbol, name, shares, value, gain_loss } = req.body;
-  
+
   if (!symbol || !name || shares === undefined || value === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -1420,7 +1794,7 @@ app.post('/api/investments', (req, res) => {
 // Categories endpoint
 app.get('/api/categories', (req, res) => {
   const categories = [
-    "Food & Dining", "Transportation", "Entertainment", "Bills & Utilities", 
+    "Food & Dining", "Transportation", "Entertainment", "Bills & Utilities",
     "Shopping", "Healthcare", "Education", "Travel", "Income", "Transfer"
   ];
   res.json(categories);
