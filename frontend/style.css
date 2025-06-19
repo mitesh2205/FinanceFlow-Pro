@@ -1434,3 +1434,106 @@ select.form-control {
     font-size: 36px;
   }
 }
+
+/* Add these CSS rules to fix chart height issues */
+
+/* Chart container constraints */
+.charts-section .card {
+  height: 350px; /* Set explicit height for chart cards */
+}
+
+.charts-section .card__body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.charts-section .card__body h3 {
+  flex-shrink: 0;
+  margin-bottom: var(--space-16);
+}
+
+/* Chart canvas containers */
+.chart-container {
+  position: relative;
+  height: 280px; /* Set explicit height for chart area */
+  width: 100%;
+  flex: 1;
+}
+
+#cashFlowChart,
+#expenseChart,
+#spendingTrendChart,
+#netWorthChart {
+  max-height: 280px !important;
+  height: 280px !important;
+}
+
+/* Analytics page chart containers */
+.analytics-grid .card {
+  height: 400px;
+}
+
+.analytics-grid .card__body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.analytics-grid .card__body h3 {
+  flex-shrink: 0;
+}
+
+.analytics-grid .chart-container {
+  height: 320px;
+}
+
+/* Health score card specific styling */
+.analytics-grid .card:has(.health-score) {
+  height: auto; /* Health score card can be auto height */
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .charts-section .card {
+    height: 300px;
+  }
+  
+  .chart-container {
+    height: 230px;
+  }
+  
+  #cashFlowChart,
+  #expenseChart,
+  #spendingTrendChart,
+  #netWorthChart {
+    max-height: 230px !important;
+    height: 230px !important;
+  }
+  
+  .analytics-grid .card {
+    height: 350px;
+  }
+  
+  .analytics-grid .chart-container {
+    height: 270px;
+  }
+}
+
+@media (max-width: 480px) {
+  .charts-section .card {
+    height: 250px;
+  }
+  
+  .chart-container {
+    height: 180px;
+  }
+  
+  #cashFlowChart,
+  #expenseChart,
+  #spendingTrendChart,
+  #netWorthChart {
+    max-height: 180px !important;
+    height: 180px !important;
+  }
+}

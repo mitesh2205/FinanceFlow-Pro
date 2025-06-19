@@ -292,7 +292,7 @@ function renderBudgetProgress() {
 }
 
 function initializeCharts() {
-  // Cash Flow Chart
+ // Cash Flow Chart
   const cashFlowCtx = document.getElementById('cashFlowChart');
   if (cashFlowCtx && appData.monthlyData.length > 0) {
     if (charts.cashFlow) {
@@ -309,35 +309,54 @@ function initializeCharts() {
             data: appData.monthlyData.map(d => d.income),
             borderColor: '#1FB8CD',
             backgroundColor: 'rgba(31, 184, 205, 0.1)',
-            tension: 0.4
+            tension: 0.4,
+            fill: false
           },
           {
             label: 'Expenses',
             data: appData.monthlyData.map(d => d.expenses),
             borderColor: '#B4413C',
             backgroundColor: 'rgba(180, 65, 60, 0.1)',
-            tension: 0.4
+            tension: 0.4,
+            fill: false
           },
           {
             label: 'Savings',
             data: appData.monthlyData.map(d => d.savings),
             borderColor: '#D2BA4C',
             backgroundColor: 'rgba(210, 186, 76, 0.1)',
-            tension: 0.4
+            tension: 0.4,
+            fill: false
           }
         ]
       },
       options: {
         responsive: true,
-        maintainAspectRatio: false,
+        maintainAspectRatio: false, // Allow chart to fill container
+        interaction: {
+          intersect: false,
+          mode: 'index'
+        },
         plugins: {
           legend: {
-            position: 'bottom'
+            position: 'bottom',
+            labels: {
+              usePointStyle: true,
+              padding: 20
+            }
           }
         },
         scales: {
+          x: {
+            grid: {
+              display: false
+            }
+          },
           y: {
             beginAtZero: true,
+            grid: {
+              color: 'rgba(0,0,0,0.1)'
+            },
             ticks: {
               callback: function(value) {
                 return '$' + value.toLocaleString();
@@ -349,7 +368,7 @@ function initializeCharts() {
     });
   }
 
-  // Expense Breakdown Chart
+ // Expense Breakdown Chart
   const expenseCtx = document.getElementById('expenseChart');
   if (expenseCtx && appData.budgets.length > 0) {
     if (charts.expense) {
@@ -362,9 +381,18 @@ function initializeCharts() {
         labels: appData.budgets.map(b => b.category),
         datasets: [{
           data: appData.budgets.map(b => b.spent),
-          backgroundColor: ['#1FB8CD', '#FFC185', '#B4413C', '#ECEBD5', '#5D878F'],
+          backgroundColor: [
+            '#1FB8CD', 
+            '#FFC185', 
+            '#B4413C', 
+            '#ECEBD5', 
+            '#5D878F',
+            '#D2BA4C',
+            '#A67C52'
+          ],
           borderWidth: 2,
-          borderColor: '#fff'
+          borderColor: '#fff',
+          hoverBorderWidth: 3
         }]
       },
       options: {
@@ -372,7 +400,34 @@ function initializeCharts() {
         maintainAspectRatio: false,
         plugins: {
           legend: {
-            position: 'bottom'
+            position: 'bottom',
+            labels: {
+              usePointStyle: true,
+              padding: 15,
+              generateLabels: function(chart) {
+                const original = Chart.defaults.plugins.legend.labels.generateLabels;
+                const labels = original.call(this, chart);
+                
+                // Add values to legend labels
+                labels.forEach((label, i) => {
+                  const value = chart.data.datasets[0].data[i];
+                  label.text += `: $${value.toLocaleString()}`;
+                });
+                
+                return labels;
+              }
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const label = context.label || '';
+                const value = context.parsed;
+                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                const percentage = ((value / total) * 100).toFixed(1);
+                return `${label}: $${value.toLocaleString()} (${percentage}%)`;
+              }
+            }
           }
         }
       }
@@ -799,7 +854,7 @@ async function initializeAnalytics() {
 }
 
 function initializeAnalyticsCharts() {
-  // Spending Trend Chart
+ // Spending Trend Chart
   const spendingTrendCtx = document.getElementById('spendingTrendChart');
   if (spendingTrendCtx && appData.monthlyData.length > 0) {
     if (charts.spendingTrend) {
@@ -815,7 +870,9 @@ function initializeAnalyticsCharts() {
           data: appData.monthlyData.map(d => d.expenses),
           backgroundColor: '#1FB8CD',
           borderColor: '#1FB8CD',
-          borderWidth: 1
+          borderWidth: 1,
+          borderRadius: 4,
+          borderSkipped: false
         }]
       },
       options: {
@@ -827,8 +884,16 @@ function initializeAnalyticsCharts() {
           }
         },
         scales: {
+          x: {
+            grid: {
+              display: false
+            }
+          },
           y: {
             beginAtZero: true,
+            grid: {
+              color: 'rgba(0,0,0,0.1)'
+            },
             ticks: {
               callback: function(value) {
                 return '$' + value.toLocaleString();
@@ -861,7 +926,11 @@ function initializeAnalyticsCharts() {
           borderColor: '#D2BA4C',
           backgroundColor: 'rgba(210, 186, 76, 0.1)',
           tension: 0.4,
-          fill: true
+          fill: true,
+          pointBackgroundColor: '#D2BA4C',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 4
         }]
       },
       options: {
@@ -873,8 +942,16 @@ function initializeAnalyticsCharts() {
           }
         },
         scales: {
+          x: {
+            grid: {
+              display: false
+            }
+          },
           y: {
             beginAtZero: false,
+            grid: {
+              color: 'rgba(0,0,0,0.1)'
+            },
             ticks: {
               callback: function(value) {
                 return '$' + value.toLocaleString();
@@ -1228,6 +1305,28 @@ window.addEventListener('resize', () => {
     sidebar.classList.remove('open');
   }
 });
+
+// Add window resize handler to properly resize charts
+window.addEventListener('resize', debounce(() => {
+  Object.values(charts).forEach(chart => {
+    if (chart && typeof chart.resize === 'function') {
+      chart.resize();
+    }
+  });
+}, 300));
+
+// Debounce utility function
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
 
 window.navigateToPage = function(page) {
   const targetLink = document.querySelector(`[data-page="${page}"]`);
