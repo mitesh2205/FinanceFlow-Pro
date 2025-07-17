@@ -311,6 +311,23 @@
             </div>
 
             <div class="upload-section">
+                <!-- Upload Instructions -->
+                <div class="card">
+                    <div class="card__body">
+                        <h3>📋 How to Upload Statements</h3>
+                        <ol style="margin: var(--space-16) 0; padding-left: var(--space-20);">
+                            <li><strong>Choose Your File:</strong> Upload PDF or CSV bank statements</li>
+                            <li><strong>Select Account:</strong> Pick which account the statement belongs to</li>
+                            <li><strong>Review Transactions:</strong> Check the parsed data before importing</li>
+                            <li><strong>Import:</strong> Add transactions to your account</li>
+                        </ol>
+                        <div style="background-color: var(--color-secondary); padding: var(--space-12); border-radius: var(--radius-base); margin-top: var(--space-16);">
+                            <strong>Supported Banks:</strong> Chase, Bank of America, Apple Card, and most CSV formats
+                        </div>
+                    </div>
+                </div>
+
+                <!-- File Upload Area -->
                 <div class="card upload-card">
                     <div class="card__body">
                         <div class="upload-area" id="uploadArea">
@@ -318,7 +335,7 @@
                             <h3>Drag and drop your statements here</h3>
                             <p>Supported formats: PDF, CSV, XLS, XLSX</p>
                             <button class="btn btn--primary" id="selectFileBtn">Select Files</button>
-                            <input type="file" id="fileInput" accept=".pdf,.csv,.xls,.xlsx" multiple hidden>
+                            <input type="file" id="fileInput" accept=".pdf,.csv,.xls,.xlsx" hidden>
                         </div>
                         <div class="upload-progress" id="uploadProgress" style="display: none;">
                             <div class="progress-bar">
@@ -329,15 +346,17 @@
                     </div>
                 </div>
 
+                <!-- Upload Preview (populated by JavaScript) -->
                 <div class="card" id="uploadPreview" style="display: none;">
+                    <!-- Content will be populated by JavaScript with account selection -->
+                </div>
+
+                <!-- Recent Uploads History -->
+                <div class="card">
                     <div class="card__body">
-                        <h3>Upload Preview</h3>
-                        <div class="preview-table" id="previewTable">
-                            <!-- Preview table will be populated by JavaScript -->
-                        </div>
-                        <div class="preview-actions">
-                            <button class="btn btn--primary" id="confirmUpload">Confirm Upload</button>
-                            <button class="btn btn--outline" id="cancelUpload">Cancel</button>
+                        <h3>Recent Uploads</h3>
+                        <div style="color: var(--color-text-secondary); text-align: center; padding: var(--space-24);">
+                            Upload history will appear here
                         </div>
                     </div>
                 </div>

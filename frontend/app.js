@@ -201,29 +201,29 @@ function initializeNavigation() {
     currentPage = page;
     
     // Initialize page-specific content
-    switch(page) {
-      case 'dashboard':
-        await initializeDashboard();
-        break;
-      case 'transactions':
-        await initializeTransactions();
-        break;
-      case 'budget':
-        await initializeBudget();
-        break;
-      case 'goals':
-        await initializeGoals();
-        break;
-      case 'investments':
-        await initializeInvestments();
-        break;
-      case 'analytics':
-        await initializeAnalytics();
-        break;
-      case 'upload':
-        initializeUpload();
-        break;
-    }
+   switch(page) {
+    case 'dashboard':
+      await initializeDashboard();
+      break;
+    case 'transactions':
+      await initializeTransactions();
+      break;
+    case 'budget':
+      await initializeBudget();
+      break;
+    case 'goals':
+      await initializeGoals();
+      break;
+    case 'investments':
+      await initializeInvestments();
+      break;
+    case 'analytics':
+      await initializeAnalytics();
+      break;
+    case 'upload':
+      await initializeUpload(); // Now loads accounts
+      break;
+  }
     
     // Close sidebar on mobile after navigation
     if (window.innerWidth <= 768) {
@@ -964,9 +964,70 @@ function initializeAnalyticsCharts() {
   }
 }
 
+// Load accounts specifically for import (with more details)
+async function loadAccountsForImport() {
+  try {
+    appData.accountsForImport = await apiRequest('/accounts/for-import');
+  } catch (error) {
+    console.error('Failed to load accounts for import:', error);
+    // Fallback to regular accounts
+    await loadAccounts();
+    appData.accountsForImport = appData.accounts.map(acc => ({
+      ...acc,
+      displayName: `${acc.name} (${acc.type})`
+    }));
+  }
+}
+
+// NEW: Render import history
+function renderImportHistory(history) {
+  const historyContainer = document.querySelector('#upload .card:last-child .card__body');
+  
+  if (!historyContainer || history.length === 0) {
+    return;
+  }
+  
+  historyContainer.innerHTML = `
+    <h3>Recent Uploads</h3>
+    <div class="import-history">
+      ${history.map(item => `
+        <div class="import-history-item">
+          <div class="import-info">
+            <div class="import-account">${item.account_name}</div>
+            <div class="import-details">
+              ${item.transaction_count} transactions • 
+              ${formatDate(item.earliest_transaction)} to ${formatDate(item.latest_transaction)}
+            </div>
+          </div>
+          <div class="import-date">
+            ${formatDate(item.last_import)}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 // Upload Functions - FIXED TO USE REAL BACKEND PARSING
-function initializeUpload() {
-  setupUploadEventListeners();
+async function initializeUpload() {
+  try {
+    await loadAccountsForImport();
+    setupUploadEventListeners();
+    await loadImportHistory(); // Load recent import history
+  } catch (error) {
+    console.error('Failed to initialize upload page:', error);
+    showToast('Failed to load accounts', 'error');
+  }
+}
+
+// NEW: Load import history
+async function loadImportHistory() {
+  try {
+    const history = await apiRequest('/import-history');
+    renderImportHistory(history);
+  } catch (error) {
+    console.error('Failed to load import history:', error);
+  }
 }
 
 function setupUploadEventListeners() {
@@ -1075,11 +1136,10 @@ async function uploadFileToBackend(file) {
   }
 }
 
-// FIXED: Show real parsed data
+// Show real parsed data
 function showUploadPreview(file, parseResult) {
   const uploadProgress = document.getElementById('uploadProgress');
   const uploadPreview = document.getElementById('uploadPreview');
-  const previewTable = document.getElementById('previewTable');
   
   uploadProgress.style.display = 'none';
   
@@ -1098,8 +1158,8 @@ function showUploadPreview(file, parseResult) {
     return;
   }
   
-  // Show preview of actual parsed transactions
-  previewTable.innerHTML = `
+  // Create the preview table HTML as a string first
+  const previewTableHTML = `
     <table>
       <thead>
         <tr>
@@ -1136,7 +1196,7 @@ function showUploadPreview(file, parseResult) {
     <div class="card__body">
       <h3>Upload Preview - ${transactions.length} transactions found</h3>
       <div class="preview-table">
-        ${previewTable.innerHTML}
+        ${previewTableHTML}
       </div>
       <div class="preview-actions">
         <button class="btn btn--primary" onclick="processUpload()">Import ${transactions.length} Transactions</button>
@@ -1148,7 +1208,8 @@ function showUploadPreview(file, parseResult) {
   uploadPreview.style.display = 'block';
 }
 
-// FIXED: Actually import parsed transactions
+
+// Actually import parsed transactions
 async function processUpload() {
   const uploadProgress = document.getElementById('uploadProgress');
   const uploadPreview = document.getElementById('uploadPreview');
@@ -1160,22 +1221,21 @@ async function processUpload() {
     return;
   }
   
+  // Use the first account as default for now
+  if (appData.accounts.length === 0) {
+    await loadAccounts();
+  }
+  
+  const defaultAccount = appData.accounts[0]?.name || 'Default Account';
+  
   uploadPreview.style.display = 'none';
   uploadProgress.style.display = 'block';
   progressText.textContent = 'Importing transactions...';
   progressFill.style.width = '0%';
   
   try {
-    // Get the default account for importing (you might want to let user choose)
-    if (appData.accounts.length === 0) {
-      await loadAccounts();
-    }
-    
-    const defaultAccount = appData.accounts[0]?.name || 'Imported Account';
-    
     console.log('Importing transactions:', uploadedTransactions.length, 'to account:', defaultAccount);
     
-    // Import the actual parsed transactions
     const response = await fetch(`${API_BASE_URL}/import-transactions`, {
       method: 'POST',
       headers: {
@@ -1225,6 +1285,8 @@ async function processUpload() {
     uploadProgress.style.display = 'none';
   }
 }
+
+
 
 function cancelUpload() {
   const uploadProgress = document.getElementById('uploadProgress');

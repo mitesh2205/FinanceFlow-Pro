@@ -1,3 +1,29 @@
+# July 17, 2025 - Major Import & Upload Enhancements
+
+## Backend
+- Improved `/api/import-transactions` endpoint:
+  - Checks if the account exists before importing.
+  - Skips and logs duplicate transactions (same date, description, amount, and account).
+  - Tracks and reports imported, skipped, and errored transactions with detailed feedback.
+- Enhanced `/api/accounts/for-import` to return more account info for better UX.
+- Added `/api/import-history` endpoint to provide recent import history.
+- Dashboard endpoint now generates realistic monthly data based on actual data.
+
+## Frontend
+- Upload page now loads accounts for import and displays recent upload history.
+- Added functions to fetch and render import history.
+- Improved upload preview and import process.
+- Upload page uses `await initializeUpload()` for proper async loading.
+- UI now shows a summary and history of uploads.
+
+## UI/UX & Styles
+- Added styles for upload summary, import history, enhanced account selection, and preview actions.
+- Responsive adjustments for upload components.
+
+## Other
+- Added `package-lock.json` (npm install).
+- Updated database file.
+
 # FinanceFlow Pro - Local Setup Guide
 
 ## Quick Setup (Frontend Only)

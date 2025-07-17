@@ -1053,87 +1053,192 @@ app.post('/api/import-transactions', (req, res) => {
     return res.status(400).json({ error: 'Account name is required' });
   }
 
-  console.log(`Importing ${transactions.length} transactions to account: ${accountName}`);
+  // First, verify the account exists
+  db.get("SELECT id, name, type FROM accounts WHERE name = ?", [accountName], (err, account) => {
+    if (err) {
+      console.error('Error checking account:', err);
+      return res.status(500).json({ error: 'Database error while checking account' });
+    }
 
-  let importedCount = 0;
-  let errors = [];
-  let processed = 0;
+    if (!account) {
+      return res.status(400).json({ 
+        error: `Account "${accountName}" not found. Please create the account first or select a different account.` 
+      });
+    }
 
-  // Process each transaction
-  const processTransaction = (transaction, index) => {
-    return new Promise((resolve) => {
-      const { date, description, amount, category } = transaction;
+    console.log(`Importing ${transactions.length} transactions to account: ${accountName} (${account.type})`);
 
-      if (!date || !description || amount === undefined || !category) {
-        errors.push(`Transaction ${index + 1}: Missing required fields (date, description, amount, or category)`);
-        resolve();
-        return;
-      }
+    let importedCount = 0;
+    let skippedCount = 0;
+    let errors = [];
+    let processed = 0;
 
-      // Validate date format
-      const parsedDate = new Date(date);
-      if (isNaN(parsedDate.getTime())) {
-        errors.push(`Transaction ${index + 1}: Invalid date format (${date})`);
-        resolve();
-        return;
-      }
+    // Process each transaction
+    const processTransaction = (transaction, index) => {
+      return new Promise((resolve) => {
+        const { date, description, amount, category } = transaction;
 
-      // Validate amount
-      const numericAmount = parseFloat(amount);
-      if (isNaN(numericAmount)) {
-        errors.push(`Transaction ${index + 1}: Invalid amount (${amount})`);
-        resolve();
-        return;
-      }
-
-      db.run("INSERT INTO transactions (date, description, amount, category, account_name) VALUES (?, ?, ?, ?, ?)",
-        [date, description, numericAmount, category, accountName], function(err) {
-        if (err) {
-          console.error(`Error inserting transaction ${index + 1}:`, err);
-          errors.push(`Transaction ${index + 1}: Database error - ${err.message}`);
-        } else {
-          importedCount++;
-
-          // Update account balance if account exists
-          db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?", [numericAmount, accountName], (updateErr) => {
-            if (updateErr) {
-              console.error('Error updating account balance:', updateErr);
-            }
-          });
-
-          // Update budget if expense (negative amount)
-          if (numericAmount < 0) {
-            db.run(`UPDATE budgets SET
-              spent = spent + ?,
-              remaining = budgeted - spent
-              WHERE category = ?`,
-              [Math.abs(numericAmount), category], (budgetErr) => {
-              if (budgetErr) {
-                console.error('Error updating budget:', budgetErr);
-              }
-            });
-          }
+        if (!date || !description || amount === undefined || !category) {
+          errors.push(`Transaction ${index + 1}: Missing required fields (date, description, amount, or category)`);
+          skippedCount++;
+          resolve();
+          return;
         }
 
-        processed++;
-        resolve();
+        // Validate date format
+        const parsedDate = new Date(date);
+        if (isNaN(parsedDate.getTime())) {
+          errors.push(`Transaction ${index + 1}: Invalid date format (${date})`);
+          skippedCount++;
+          resolve();
+          return;
+        }
+
+        // Validate amount
+        const numericAmount = parseFloat(amount);
+        if (isNaN(numericAmount)) {
+          errors.push(`Transaction ${index + 1}: Invalid amount (${amount})`);
+          skippedCount++;
+          resolve();
+          return;
+        }
+
+        // Check for potential duplicates (same date, description, and amount)
+        db.get(
+          "SELECT COUNT(*) as count FROM transactions WHERE date = ? AND description = ? AND amount = ? AND account_name = ?",
+          [date, description, numericAmount, accountName],
+          (dupErr, dupResult) => {
+            if (dupErr) {
+              console.error(`Error checking for duplicates for transaction ${index + 1}:`, dupErr);
+              errors.push(`Transaction ${index + 1}: Database error checking for duplicates`);
+              skippedCount++;
+              resolve();
+              return;
+            }
+
+            if (dupResult.count > 0) {
+              console.log(`Skipping potential duplicate transaction: ${description} (${date})`);
+              errors.push(`Transaction ${index + 1}: Potential duplicate found, skipped`);
+              skippedCount++;
+              resolve();
+              return;
+            }
+
+            // Insert the transaction
+            db.run(
+              "INSERT INTO transactions (date, description, amount, category, account_name) VALUES (?, ?, ?, ?, ?)",
+              [date, description, numericAmount, category, accountName], 
+              function(err) {
+                if (err) {
+                  console.error(`Error inserting transaction ${index + 1}:`, err);
+                  errors.push(`Transaction ${index + 1}: Database error - ${err.message}`);
+                  skippedCount++;
+                } else {
+                  importedCount++;
+
+                  // Update account balance
+                  db.run("UPDATE accounts SET balance = balance + ? WHERE name = ?", [numericAmount, accountName], (updateErr) => {
+                    if (updateErr) {
+                      console.error('Error updating account balance:', updateErr);
+                      // Note: We don't fail the transaction import if balance update fails
+                    }
+                  });
+
+                  // Update budget if expense (negative amount)
+                  if (numericAmount < 0) {
+                    db.run(`UPDATE budgets SET
+                      spent = spent + ?,
+                      remaining = budgeted - spent
+                      WHERE category = ?`,
+                      [Math.abs(numericAmount), category], (budgetErr) => {
+                      if (budgetErr) {
+                        console.error('Error updating budget:', budgetErr);
+                        // Note: We don't fail the transaction import if budget update fails
+                      }
+                    });
+                  }
+                }
+
+                processed++;
+                resolve();
+              }
+            );
+          }
+        );
       });
-    });
-  };
+    };
 
-  // Process all transactions
-  Promise.all(transactions.map(processTransaction)).then(() => {
-    console.log(`Import complete: ${importedCount}/${transactions.length} transactions imported`);
+    // Process all transactions
+    Promise.all(transactions.map(processTransaction)).then(() => {
+      console.log(`Import complete: ${importedCount}/${transactions.length} transactions imported to ${accountName}`);
 
-    res.json({
-      message: `Successfully imported ${importedCount} out of ${transactions.length} transactions`,
-      importedCount,
-      totalCount: transactions.length,
-      errors: errors.length > 0 ? errors : undefined,
-      skippedCount: transactions.length - importedCount
+      const response = {
+        message: `Successfully imported ${importedCount} out of ${transactions.length} transactions to ${accountName}`,
+        importedCount,
+        skippedCount,
+        totalCount: transactions.length,
+        accountName: accountName,
+        accountType: account.type
+      };
+
+      // Only include errors if there are any, and limit the number shown
+      if (errors.length > 0) {
+        response.errors = errors.slice(0, 10); // Show first 10 errors
+        if (errors.length > 10) {
+          response.errors.push(`... and ${errors.length - 10} more errors`);
+        }
+      }
+
+      res.json(response);
     });
   });
 });
+
+// Get available accounts for import dropdown
+app.get('/api/accounts/for-import', (req, res) => {
+  db.all("SELECT id, name, type, institution FROM accounts ORDER BY name", (err, rows) => {
+    if (err) {
+      console.error('Error fetching accounts for import:', err);
+      res.status(500).json({ error: err.message });
+    } else {
+      // Return accounts with additional info for better UX
+      const accountsForImport = rows.map(account => ({
+        id: account.id,
+        name: account.name,
+        type: account.type,
+        institution: account.institution,
+        displayName: `${account.name} (${account.type} - ${account.institution})`
+      }));
+      res.json(accountsForImport);
+    }
+  });
+});
+
+// Import history tracking (optional enhancement)
+app.get('/api/import-history', (req, res) => {
+  // This would require a new table to track import history
+  // For now, we can return recent transactions grouped by account
+  db.all(`
+    SELECT 
+      account_name,
+      COUNT(*) as transaction_count,
+      MAX(created_at) as last_import,
+      MIN(date) as earliest_transaction,
+      MAX(date) as latest_transaction
+    FROM transactions 
+    WHERE created_at >= date('now', '-30 days')
+    GROUP BY account_name
+    ORDER BY last_import DESC
+  `, (err, rows) => {
+    if (err) {
+      console.error('Error fetching import history:', err);
+      res.status(500).json({ error: err.message });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
 
 // Admin interface route
 app.get('/admin', (req, res) => {
@@ -1648,20 +1753,50 @@ app.get('/api/dashboard', (req, res) => {
           const savingsAmount = monthlyIncome - monthlyExpenses;
           const savingsRate = monthlyIncome > 0 ? ((savingsAmount / monthlyIncome) * 100) : 0;
 
-          // Simulated monthly data for charts (you can customize this)
-          const monthlyData = [
-            {month: "Jul", income: 3200, expenses: 2600, savings: 600},
-            {month: "Aug", income: 3200, expenses: 2800, savings: 400},
-            {month: "Sep", income: 3200, expenses: 2500, savings: 700},
-            {month: "Oct", income: 3200, expenses: 2900, savings: 300},
-            {month: "Nov", income: 3200, expenses: 2700, savings: 500},
-            {month: "Dec", income: monthlyIncome || 3200, expenses: monthlyExpenses || 2600, savings: savingsAmount || 600}
-          ];
+          // Generate realistic monthly data based on actual data or show empty state
+          let monthlyData = [];
+          
+          if (monthlyIncome > 0 || monthlyExpenses > 0) {
+            // If we have some data, create 6 months with some variation
+            const baseIncome = monthlyIncome || 0;
+            const baseExpenses = monthlyExpenses || 0;
+            
+            const months = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            monthlyData = months.map((month, index) => {
+              // Add some realistic variation (±10%)
+              const incomeVariation = baseIncome * (0.9 + Math.random() * 0.2);
+              const expenseVariation = baseExpenses * (0.9 + Math.random() * 0.2);
+              
+              return {
+                month: month,
+                income: Math.round(incomeVariation),
+                expenses: Math.round(expenseVariation),
+                savings: Math.round(incomeVariation - expenseVariation)
+              };
+            });
+            
+            // Make sure the last month uses actual current data
+            monthlyData[monthlyData.length - 1] = {
+              month: "Dec",
+              income: monthlyIncome,
+              expenses: monthlyExpenses,
+              savings: savingsAmount
+            };
+          } else {
+            // If no data at all, return empty months
+            const months = ["Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            monthlyData = months.map(month => ({
+              month: month,
+              income: 0,
+              expenses: 0,
+              savings: 0
+            }));
+          }
 
           summary.monthly_data = monthlyData;
-          summary.monthly_income = monthlyIncome || 3200;
-          summary.monthly_expenses = monthlyExpenses || 2600;
-          summary.savings_rate = Math.round(savingsRate * 10) / 10; // Round to 1 decimal
+          summary.monthly_income = monthlyIncome; // No fallback - show actual $0
+          summary.monthly_expenses = monthlyExpenses; // No fallback - show actual $0
+          summary.savings_rate = Math.round(savingsRate * 10) / 10;
 
           res.json(summary);
         });
