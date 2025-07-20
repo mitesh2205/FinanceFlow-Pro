@@ -375,11 +375,38 @@ function parseAppleCardStatement(text) {
 
 
 function parseCSVStatement(text) {
+  console.log('=== PARSING GENERIC CSV ===');
   const transactions = [];
   const lines = text.split('\n');
+  
+  // Find the header row
+  const headerRow = lines.findIndex(line => 
+    line.toLowerCase().includes('date') && 
+    (line.toLowerCase().includes('description') || line.toLowerCase().includes('payee')) &&
+    line.toLowerCase().includes('amount')
+  );
+  
+  if (headerRow === -1) {
+    console.error('Could not find header row in CSV');
+    return transactions;
+  }
 
-  // Skip header row and process data
-  for (let i = 1; i < lines.length; i++) {
+  // Map the columns
+  const headers = parseCSVLine(lines[headerRow]).map(h => h.trim().toLowerCase());
+  const columnMap = {
+    date: headers.findIndex(h => h.includes('date')),
+    description: headers.findIndex(h => h.includes('description') || h.includes('payee')),
+    amount: headers.findIndex(h => h.includes('amount'))
+  };
+
+  // Check if we found all required columns
+  if (columnMap.date === -1 || columnMap.description === -1 || columnMap.amount === -1) {
+    console.error('CSV is missing required columns:', columnMap);
+    return transactions;
+  }
+
+  // Process data rows
+  for (let i = headerRow + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
 
@@ -435,38 +462,61 @@ function parseChaseCheckingCSV(text) {
   const lines = text.split('\n');
   if (lines.length < 2) return []; // Need at least a header and one data line
 
-  // Dynamically find the column indexes from the header row.
-  // This is robust even if Chase changes the column order in the future.
-  const header = parseCSVLine(lines[0].toLowerCase());
+  // Find header row (Chase CSVs might have extra lines at the top)
+  let headerRow = 0;
+  for (let i = 0; i < Math.min(10, lines.length); i++) {
+    const line = lines[i].toLowerCase();
+    if (line.includes('posting date') && line.includes('description') && line.includes('amount')) {
+      headerRow = i;
+      break;
+    }
+  }
+
+  console.log('Found header row at line:', headerRow);
+  const header = parseCSVLine(lines[headerRow]).map(h => h.trim().toLowerCase());
+  console.log('Chase CSV headers:', header);
+
+  // Map all possible columns that might be present
   const columnMap = {
+    details: header.indexOf('details'),
     date: header.indexOf('posting date'),
     description: header.indexOf('description'),
     amount: header.indexOf('amount'),
-    type: header.indexOf('type') // Useful for categorization
+    type: header.indexOf('type'),
+    balance: header.indexOf('balance')
   };
 
   // Check if all required columns were found
   if (columnMap.date === -1 || columnMap.description === -1 || columnMap.amount === -1) {
-    console.error('Chase CSV is missing required columns: "posting date", "description", or "amount".');
+    console.error('Chase CSV is missing required columns:', columnMap);
     return [];
   }
 
-  // Start from the first data row (i=1)
-  for (let i = 1; i < lines.length; i++) {
+  // Start from the row after header
+  for (let i = headerRow + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
 
     const fields = parseCSVLine(line);
-    // Ensure the line has enough columns to avoid errors
+    // Ensure the line has enough columns
     if (fields.length <= Math.max(columnMap.date, columnMap.description, columnMap.amount)) continue;
 
     try {
       const dateStr = fields[columnMap.date];
-      const description = fields[columnMap.description];
-      const amountStr = fields[columnMap.amount];
+      const description = fields[columnMap.description].replace(/"/g, '').trim();
+      let amountStr = fields[columnMap.amount].replace(/[,$]/g, '').trim();
+      const type = columnMap.type !== -1 ? fields[columnMap.type] : '';
       
+      // Parse date
       const date = parseDateString(dateStr);
-      const amount = parseFloat(amountStr);
+      
+      // Handle amount based on transaction type (DEBIT/CREDIT)
+      let amount = parseFloat(amountStr);
+      // If it's already negative (has a minus sign), keep it as is
+      // Otherwise, make it negative for DEBIT transactions
+      if (!amountStr.includes('-') && fields[columnMap.details]?.toUpperCase() === 'DEBIT') {
+        amount = -Math.abs(amount);
+      }
 
       // Final validation to ensure we have good data
       if (date && description && !isNaN(amount)) {
@@ -538,6 +588,134 @@ function parseChaseCreditCardCSV(text) {
   }
 
   console.log(`Found ${transactions.length} transactions in Chase Credit Card CSV.`);
+  return transactions;
+}
+
+function parseBofACheckingCSV(text) {
+  console.log('=== PARSING BANK OF AMERICA CHECKING CSV ===');
+  const transactions = [];
+  const lines = text.split('\n');
+
+  // Skip the summary section at the top
+  // Look for the actual transaction header row that has Date, Description, Amount, Running Bal
+  let headerRow = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.includes('Date,Description,Amount,Running Bal')) {
+      headerRow = i;
+      break;
+    }
+  }
+  
+  if (headerRow === -1) {
+    console.error('Could not find transaction header row in BofA checking CSV');
+    return transactions;
+  }
+
+  // Parse header row carefully
+  const headers = parseCSVLine(lines[headerRow]).map(h => h.trim().toLowerCase());
+  console.log('Found transaction headers:', headers);
+
+  // Extract current year from first transaction date
+  let currentYear = new Date().getFullYear();
+  for (let i = headerRow + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line) {
+      const fields = parseCSVLine(line);
+      const dateMatch = fields[0].match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      if (dateMatch) {
+        currentYear = parseInt(dateMatch[3], 10);
+        console.log('Extracted year from transaction:', currentYear);
+        break;
+      }
+    }
+  }
+
+  const columnMap = {
+    date: headers.findIndex(h => h === 'date'),
+    description: headers.findIndex(h => h === 'description'),
+    amount: headers.findIndex(h => h === 'amount'),
+    balance: headers.findIndex(h => h === 'running bal.')
+  };
+  
+  console.log('Column mapping:', columnMap);
+
+  // Verify required columns exist
+  if (columnMap.date === -1 || columnMap.description === -1 || columnMap.amount === -1) {
+    console.error('BofA Checking CSV is missing required columns:', columnMap);
+    return transactions;
+  }
+
+  // Skip header row and start processing transactions
+  for (let i = headerRow + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    try {
+      const columns = parseCSVLine(line);
+      
+      // Skip any balance rows (beginning or ending balance)
+      const descLower = columns[columnMap.description].toLowerCase();
+      if (descLower.includes('beginning balance') || descLower.includes('ending balance')) {
+        console.log('Skipping balance row:', columns[columnMap.description]);
+        continue;
+      }
+
+      // Parse the date with the correct year
+      const dateStr = columns[columnMap.date];
+      // Handle both / and - separators
+      const dateMatch = dateStr.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+      if (!dateMatch) {
+        console.log('Skipping row with invalid date format:', line);
+        continue;
+      }
+      const month = parseInt(dateMatch[1], 10);
+      const day = parseInt(dateMatch[2], 10);
+      const year = parseInt(dateMatch[3], 10);
+      const date = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+
+      const description = columns[columnMap.description].trim();
+      
+      // Get amount, handling quoted values and removing commas
+      const amountStr = columns[columnMap.amount].replace(/"/g, '').replace(/,/g, '');
+      
+      // Skip rows with no valid amount
+      if (!amountStr) {
+        console.log('Skipping row with no valid amount:', line);
+        continue;
+      }
+      
+      let amount = parseFloat(amountStr);
+      
+      // Skip if amount is not a valid number
+      if (isNaN(amount)) {
+        // Check if this might be a running balance row
+        if (columns[columnMap.balance]) {
+          console.log('Skipping running balance row:', line);
+          continue;
+        }
+        console.log('Skipping row with invalid amount:', line);
+        continue;
+      }
+      
+      // Round to 2 decimal places to avoid floating point precision issues
+      amount = Math.round(amount * 100) / 100;
+
+      // Create transaction object
+      const transaction = {
+        date: date, // Use the ISO date string directly, no need to parse again
+        description: description,
+        amount: amount,
+        category: categorizeTransaction(description)
+      };
+
+      transactions.push(transaction);
+    } catch (error) {
+      console.error(`Error parsing BofA Checking CSV line: "${line}"`, error);
+    }
+  }
+
+  console.log(`Found ${transactions.length} transactions in BofA Checking CSV.`);
   return transactions;
 }
 
@@ -923,17 +1101,29 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
         // The rest of your logic for detecting which parser to use stays the same.
         // It will now work correctly because the BOM is gone.
 
-        // Check for Bank of America Credit Card CSV (most specific headers)
-        if (lowerCaseText.includes('posted date') && lowerCaseText.includes('reference number') && lowerCaseText.includes('payee')) {
-          console.log('Detected Bank of America Credit Card CSV. Using specialized parser.');
-          transactions = parseBofACreditCardCSV(text);
-
-        // Check for Chase Credit Card CSV
+        // Check for Chase CSVs first (more specific patterns)
+        if (lowerCaseText.includes('posting date') && lowerCaseText.includes('type') && lowerCaseText.includes('check or slip #')) {
+          console.log('Detected Chase Checking CSV. Using specialized parser.');
+          transactions = parseChaseCheckingCSV(text);
         } else if (lowerCaseText.includes('transaction date') && lowerCaseText.includes('category') && lowerCaseText.includes('post date')) {
           console.log('Detected Chase Credit Card CSV. Using specialized parser.');
           transactions = parseChaseCreditCardCSV(text);
+        
+        // Then check for Bank of America CSVs
+        } else if (lowerCaseText.includes('posted date') && lowerCaseText.includes('reference number') && lowerCaseText.includes('payee')) {
+          console.log('Detected Bank of America Credit Card CSV. Using specialized parser.');
+          transactions = parseBofACreditCardCSV(text);
+        } else if (lowerCaseText.includes('running bal.') && lowerCaseText.includes('date,description,amount')) {
+          console.log('Detected Bank of America Checking CSV. Using specialized parser.');
+          transactions = parseBofACheckingCSV(text);
+          
+          // If BofA parser didn't work, try the generic CSV parser
+          if (transactions.length === 0) {
+            console.log('BofA parser found no transactions, trying generic CSV parser...');
+            transactions = parseCSVStatement(text);
+          }
 
-        // Check for Chase Checking CSV
+        // Generic CSV fallback
         } else if (lowerCaseText.includes('posting date') && lowerCaseText.includes('check or slip')) {
           console.log('Detected Chase Checking CSV. Using specialized parser.');
           transactions = parseChaseCheckingCSV(text);
@@ -1053,6 +1243,29 @@ app.post('/api/import-transactions', (req, res) => {
     return res.status(400).json({ error: 'Account name is required' });
   }
 
+  // Process transactions and ensure dates are handled consistently
+  const processedTransactions = transactions.map(t => {
+    // First convert the date string to a Date object in UTC
+    const dateStr = t.date;
+    // Handle date strings in MM/DD/YYYY format
+    const match = dateStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    let date;
+    if (match) {
+      // If it's in MM/DD/YYYY format, construct date in UTC
+      const [, month, day, year] = match;
+      date = new Date(Date.UTC(year, month - 1, day));
+    } else {
+      // For other formats, parse as UTC
+      date = new Date(dateStr + 'T00:00:00Z');
+    }
+    
+    return {
+      ...t,
+      // Store the date in YYYY-MM-DD format
+      date: date.toISOString().split('T')[0]
+    };
+  });
+
   // First, verify the account exists
   db.get("SELECT id, name, type FROM accounts WHERE name = ?", [accountName], (err, account) => {
     if (err) {
@@ -1085,10 +1298,22 @@ app.post('/api/import-transactions', (req, res) => {
           return;
         }
 
-        // Validate date format
-        const parsedDate = new Date(date);
-        if (isNaN(parsedDate.getTime())) {
-          errors.push(`Transaction ${index + 1}: Invalid date format (${date})`);
+        // Validate date format strictly
+        if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          errors.push(`Transaction ${index + 1}: Invalid date format. Expected YYYY-MM-DD but got (${date})`);
+          skippedCount++;
+          resolve();
+          return;
+        }
+        
+        // Additional validation to ensure date is valid
+        const [year, month, day] = date.split('-').map(Number);
+        const parsedDate = new Date(Date.UTC(year, month - 1, day));
+        if (isNaN(parsedDate.getTime()) || 
+            parsedDate.getUTCFullYear() !== year || 
+            parsedDate.getUTCMonth() !== month - 1 || 
+            parsedDate.getUTCDate() !== day) {
+          errors.push(`Transaction ${index + 1}: Invalid date value (${date})`);
           skippedCount++;
           resolve();
           return;

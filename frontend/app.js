@@ -1123,8 +1123,8 @@ async function uploadFileToBackend(file) {
         // Store the parsed transactions
         uploadedTransactions = result.transactions || [];
         
-        setTimeout(() => {
-          showUploadPreview(file, result);
+        setTimeout(async () => {
+          await showUploadPreview(file, result);
         }, 500);
       }
     }, 50);
@@ -1137,9 +1137,14 @@ async function uploadFileToBackend(file) {
 }
 
 // Show real parsed data
-function showUploadPreview(file, parseResult) {
+async function showUploadPreview(file, parseResult) {
   const uploadProgress = document.getElementById('uploadProgress');
   const uploadPreview = document.getElementById('uploadPreview');
+  
+  // Make sure accounts are loaded
+  if (!appData.accounts || appData.accounts.length === 0) {
+    await loadAccounts();
+  }
   
   uploadProgress.style.display = 'none';
   
@@ -1195,6 +1200,14 @@ function showUploadPreview(file, parseResult) {
   uploadPreview.innerHTML = `
     <div class="card__body">
       <h3>Upload Preview - ${transactions.length} transactions found</h3>
+      <div class="form-group">
+        <label class="form-label">Select Account</label>
+        <select class="form-control" id="uploadAccountSelect" required>
+          ${appData.accounts.map(acc => 
+            `<option value="${acc.name}">${acc.name} (${acc.type} - ${acc.institution})</option>`
+          ).join('')}
+        </select>
+      </div>
       <div class="preview-table">
         ${previewTableHTML}
       </div>
@@ -1221,12 +1234,11 @@ async function processUpload() {
     return;
   }
   
-  // Use the first account as default for now
-  if (appData.accounts.length === 0) {
-    await loadAccounts();
+  const selectedAccount = document.getElementById('uploadAccountSelect')?.value;
+  if (!selectedAccount) {
+    showToast('Please select an account for the transactions', 'error');
+    return;
   }
-  
-  const defaultAccount = appData.accounts[0]?.name || 'Default Account';
   
   uploadPreview.style.display = 'none';
   uploadProgress.style.display = 'block';
@@ -1234,7 +1246,7 @@ async function processUpload() {
   progressFill.style.width = '0%';
   
   try {
-    console.log('Importing transactions:', uploadedTransactions.length, 'to account:', defaultAccount);
+    console.log('Importing transactions:', uploadedTransactions.length, 'to account:', selectedAccount);
     
     const response = await fetch(`${API_BASE_URL}/import-transactions`, {
       method: 'POST',
@@ -1243,7 +1255,7 @@ async function processUpload() {
       },
       body: JSON.stringify({
         transactions: uploadedTransactions,
-        accountName: defaultAccount
+        accountName: selectedAccount
       })
     });
     

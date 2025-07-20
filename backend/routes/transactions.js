@@ -10,7 +10,21 @@ router.get('/', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
-        res.json(rows);
+        // Format dates consistently using UTC to avoid timezone issues
+        const formattedRows = rows.map(row => {
+            // Parse the date in UTC
+            const date = new Date(row.date + 'T00:00:00Z');
+            // Create UTC year, month, day values
+            const year = date.getUTCFullYear();
+            const month = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' }).format(date);
+            const day = date.getUTCDate();
+            
+            return {
+                ...row,
+                date: `${month} ${day}, ${year}`
+            };
+        });
+        res.json(formattedRows);
     });
 });
 
@@ -24,7 +38,16 @@ router.get('/account/:accountId', (req, res) => {
                 res.status(500).json({ error: err.message });
                 return;
             }
-            res.json(rows);
+            // Format dates consistently
+            const formattedRows = rows.map(row => ({
+                ...row,
+                date: new Date(row.date + 'T00:00:00Z').toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                })
+            }));
+            res.json(formattedRows);
         }
     );
 });
