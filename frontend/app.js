@@ -1,5 +1,5 @@
-// API Configuration
-const API_BASE_URL = 'http://localhost:3001/api';
+// API Configuration  
+const API_BASE_URL = 'http://localhost:3002/api';
 
 // Global variables
 let currentPage = 'dashboard';
@@ -20,19 +20,61 @@ let appData = {
   monthlyData: []
 };
 
+// Authentication helper
+function getAuthToken() {
+  return localStorage.getItem('financeflow_token');
+}
+
+function getAuthHeaders() {
+  const token = getAuthToken();
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
+function checkAuth() {
+  const token = getAuthToken();
+  if (!token) {
+    window.location.href = 'login.html';
+    return false;
+  }
+  return true;
+}
+
 // API Helper Functions
 async function apiRequest(endpoint, options = {}) {
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
+        ...getAuthHeaders(),
         ...options.headers
       },
       ...options
     });
     
     if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      if (response.status === 401) {
+        // Unauthorized - redirect to login
+        localStorage.removeItem('financeflow_token');
+        localStorage.removeItem('financeflow_user');
+        window.location.href = 'login.html';
+        return;
+      }
+      
+      // Try to get error details from response
+      let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        if (errorData.message) {
+          errorMessage = errorData.message;
+        }
+        if (errorData.errors && Array.isArray(errorData.errors)) {
+          errorMessage += '\n' + errorData.errors.map(err => err.message).join('\n');
+        }
+      } catch (e) {
+        // Could not parse error response, use default message
+      }
+      
+      throw new Error(errorMessage);
     }
     
     return await response.json();
@@ -93,8 +135,14 @@ async function loadInvestments() {
 
 async function loadDashboardData() {
   try {
-    const dashboardData = await apiRequest('/dashboard');
+    const [dashboardData, chartData] = await Promise.all([
+      apiRequest('/dashboard'),
+      apiRequest('/charts/data')
+    ]);
+    
     appData.monthlyData = dashboardData.monthly_data || [];
+    appData.chartData = chartData; // Store enhanced chart data
+    
     // Update overview cards with real data
     updateOverviewCards(dashboardData);
   } catch (error) {
@@ -189,6 +237,7 @@ function initializeNavigation() {
     const pageTitles = {
       dashboard: 'Dashboard',
       transactions: 'Transactions',
+      accounts: 'Account Management',
       budget: 'Budget Planner',
       goals: 'Goals & Savings',
       investments: 'Investments',
@@ -222,6 +271,9 @@ function initializeNavigation() {
       break;
     case 'upload':
       await initializeUpload(); // Now loads accounts
+      break;
+    case 'accounts':
+      await initializeAccounts();
       break;
   }
     
@@ -292,146 +344,532 @@ function renderBudgetProgress() {
 }
 
 function initializeCharts() {
- // Cash Flow Chart
-  const cashFlowCtx = document.getElementById('cashFlowChart');
-  if (cashFlowCtx && appData.monthlyData.length > 0) {
-    if (charts.cashFlow) {
-      charts.cashFlow.destroy();
-    }
-    
-    charts.cashFlow = new Chart(cashFlowCtx, {
-      type: 'line',
-      data: {
-        labels: appData.monthlyData.map(d => d.month),
-        datasets: [
-          {
-            label: 'Income',
-            data: appData.monthlyData.map(d => d.income),
-            borderColor: '#1FB8CD',
-            backgroundColor: 'rgba(31, 184, 205, 0.1)',
-            tension: 0.4,
-            fill: false
-          },
-          {
-            label: 'Expenses',
-            data: appData.monthlyData.map(d => d.expenses),
-            borderColor: '#B4413C',
-            backgroundColor: 'rgba(180, 65, 60, 0.1)',
-            tension: 0.4,
-            fill: false
-          },
-          {
-            label: 'Savings',
-            data: appData.monthlyData.map(d => d.savings),
-            borderColor: '#D2BA4C',
-            backgroundColor: 'rgba(210, 186, 76, 0.1)',
-            tension: 0.4,
-            fill: false
-          }
-        ]
+  if (!appData.chartData) return;
+  
+  const chartColors = {
+    income: '#10B981', // Green
+    expenses: '#EF4444', // Red  
+    pieColors: [
+      '#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444',
+      '#06B6D4', '#84CC16', '#F97316', '#EC4899', '#6366F1'
+    ]
+  };
+
+  // Monthly Income vs Expenses Bar Chart
+  initializeMonthlyBarChart(chartColors);
+  
+  // Income Category Pie Chart  
+  initializeIncomePieChart(chartColors);
+  
+  // Expense Category Pie Chart
+  initializeExpensePieChart(chartColors);
+  
+  // Financial Health Gauge
+  initializeFinancialHealthGauge(chartColors);
+  
+  // Smart Financial Insights
+  updateSmartInsights();
+  
+  // Loan Tracking (if loan data exists)
+  if (appData.chartData.loanTracking && appData.chartData.loanTracking.totalPayments > 0) {
+    initializeLoanTracking(chartColors);
+  }
+}
+
+function initializeMonthlyBarChart(colors) {
+  const ctx = document.getElementById('monthlyBarChart');
+  if (!ctx || !appData.chartData.monthlyData?.length) return;
+  
+  if (charts.monthlyBar) {
+    charts.monthlyBar.destroy();
+  }
+  
+  const monthlyData = appData.chartData.monthlyData;
+  
+  charts.monthlyBar = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: monthlyData.map(d => {
+        const date = new Date(d.month + '-01');
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      }),
+      datasets: [
+        {
+          label: 'Income',
+          data: monthlyData.map(d => d.income),
+          backgroundColor: colors.income,
+          borderColor: colors.income,
+          borderWidth: 1,
+          borderRadius: 4,
+          borderSkipped: false,
+        },
+        {
+          label: 'Expenses', 
+          data: monthlyData.map(d => d.expenses),
+          backgroundColor: colors.expenses,
+          borderColor: colors.expenses,
+          borderWidth: 1,
+          borderRadius: 4,
+          borderSkipped: false,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        intersect: false,
+        mode: 'index'
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false, // Allow chart to fill container
-        interaction: {
-          intersect: false,
-          mode: 'index'
-        },
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: {
-              usePointStyle: true,
-              padding: 20
-            }
+      plugins: {
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: {
+            usePointStyle: true,
+            padding: 20,
+            font: { size: 12, weight: '500' }
           }
         },
-        scales: {
-          x: {
-            grid: {
-              display: false
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          titleColor: 'white',
+          bodyColor: 'white',
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          borderWidth: 1,
+          cornerRadius: 8,
+          callbacks: {
+            label: function(context) {
+              return `${context.dataset.label}: $${context.parsed.y.toLocaleString()}`;
             }
-          },
-          y: {
-            beginAtZero: true,
-            grid: {
-              color: 'rgba(0,0,0,0.1)'
-            },
-            ticks: {
-              callback: function(value) {
-                return '$' + value.toLocaleString();
-              }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 11 } }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: 'rgba(0,0,0,0.05)' },
+          ticks: {
+            font: { size: 11 },
+            callback: function(value) {
+              return '$' + (value >= 1000 ? (value/1000).toFixed(1) + 'K' : value);
             }
           }
         }
       }
+    }
+  });
+}
+
+function initializeIncomePieChart(colors) {
+  const ctx = document.getElementById('incomePieChart');
+  if (!ctx || !appData.chartData.incomeCategories?.length) return;
+  
+  if (charts.incomePie) {
+    charts.incomePie.destroy();
+  }
+  
+  const incomeData = appData.chartData.incomeCategories;
+  
+  charts.incomePie = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: incomeData.map(d => d.category),
+      datasets: [{
+        data: incomeData.map(d => d.total),
+        backgroundColor: colors.pieColors.slice(0, incomeData.length),
+        borderWidth: 2,
+        borderColor: '#fff',
+        hoverBorderWidth: 3,
+        hoverOffset: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '60%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            usePointStyle: true,
+            padding: 15,
+            font: { size: 11 },
+            generateLabels: function(chart) {
+              const original = Chart.defaults.plugins.legend.labels.generateLabels;
+              const labels = original.call(this, chart);
+              labels.forEach((label, i) => {
+                const value = chart.data.datasets[0].data[i];
+                const total = chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                const percentage = ((value / total) * 100).toFixed(1);
+                label.text = `${label.text} (${percentage}%)`;
+              });
+              return labels;
+            }
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          callbacks: {
+            label: function(context) {
+              const value = context.parsed;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = ((value / total) * 100).toFixed(1);
+              return `${context.label}: $${value.toLocaleString()} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function initializeExpensePieChart(colors) {
+  const ctx = document.getElementById('expensePieChart');
+  if (!ctx || !appData.chartData.expenseCategories?.length) return;
+  
+  if (charts.expensePie) {
+    charts.expensePie.destroy();
+  }
+  
+  const expenseData = appData.chartData.expenseCategories;
+  
+  charts.expensePie = new Chart(ctx, {
+    type: 'doughnut', 
+    data: {
+      labels: expenseData.map(d => d.category),
+      datasets: [{
+        data: expenseData.map(d => d.total),
+        backgroundColor: colors.pieColors.slice(0, expenseData.length),
+        borderWidth: 2,
+        borderColor: '#fff',
+        hoverBorderWidth: 3,
+        hoverOffset: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '60%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            usePointStyle: true,
+            padding: 15,
+            font: { size: 11 },
+            generateLabels: function(chart) {
+              const original = Chart.defaults.plugins.legend.labels.generateLabels;
+              const labels = original.call(this, chart);
+              labels.forEach((label, i) => {
+                const value = chart.data.datasets[0].data[i];
+                const total = chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                const percentage = ((value / total) * 100).toFixed(1);
+                label.text = `${label.text} (${percentage}%)`;
+              });
+              return labels;
+            }
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          callbacks: {
+            label: function(context) {
+              const value = context.parsed;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = ((value / total) * 100).toFixed(1);
+              return `${context.label}: $${value.toLocaleString()} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function initializeFinancialHealthGauge(colors) {
+  const ctx = document.getElementById('healthGaugeChart');
+  if (!ctx || !appData.chartData) return;
+  
+  if (charts.healthGauge) {
+    charts.healthGauge.destroy();
+  }
+  
+  // Calculate financial health score based on user data
+  const healthScore = calculateFinancialHealthScore();
+  
+  // Update score display
+  document.getElementById('healthScoreValue').textContent = healthScore;
+  
+  // Update insights
+  updateHealthInsights(healthScore);
+  
+  charts.healthGauge = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [healthScore, 100 - healthScore],
+        backgroundColor: [
+          getHealthScoreColor(healthScore),
+          'rgba(255, 255, 255, 0.1)'
+        ],
+        borderWidth: 0,
+        cutout: '80%',
+        circumference: 180,
+        rotation: 270,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false }
+      }
+    }
+  });
+}
+
+function calculateFinancialHealthScore() {
+  if (!appData.chartData || !appData.chartData.monthlyData) return 50;
+  
+  const monthlyData = appData.chartData.monthlyData;
+  if (!monthlyData.length) return 50;
+  
+  // Calculate average monthly income/expense ratio
+  const latestMonth = monthlyData[monthlyData.length - 1];
+  const avgIncome = monthlyData.reduce((sum, m) => sum + m.income, 0) / monthlyData.length;
+  const avgExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0) / monthlyData.length;
+  
+  // Calculate true savings rate considering loan payments
+  const loanPayments = appData.chartData.loanTracking?.totalPayments / 3 || 0; // Monthly avg
+  const totalMonthlyOutflow = avgExpenses + loanPayments;
+  const savingsRate = avgIncome > 0 ? ((avgIncome - totalMonthlyOutflow) / avgIncome) * 100 : 0;
+  
+  // Income consistency (lower variation is better)
+  const incomeVariation = calculateVariation(monthlyData.map(m => m.income));
+  const consistencyScore = Math.max(0, 100 - (incomeVariation * 2));
+  
+  // Expense control (lower expense growth is better)
+  const expenseGrowth = monthlyData.length > 1 ? 
+    ((latestMonth.expenses - monthlyData[0].expenses) / monthlyData[0].expenses) * 100 : 0;
+  const expenseControlScore = Math.max(0, 100 - Math.abs(expenseGrowth));
+  
+  // Weighted score calculation
+  const healthScore = (
+    (Math.max(0, Math.min(100, savingsRate * 2)) * 0.5) + // Savings rate (50% weight)
+    (consistencyScore * 0.3) + // Income consistency (30% weight)  
+    (expenseControlScore * 0.2) // Expense control (20% weight)
+  );
+  
+  return Math.round(Math.max(10, Math.min(100, healthScore)));
+}
+
+function calculateVariation(values) {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+  const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+  const stdDev = Math.sqrt(variance);
+  return mean > 0 ? (stdDev / mean) * 100 : 0;
+}
+
+function getHealthScoreColor(score) {
+  if (score >= 80) return '#10B981'; // Green - Excellent
+  if (score >= 60) return '#F59E0B'; // Yellow - Good  
+  if (score >= 40) return '#F97316'; // Orange - Fair
+  return '#EF4444'; // Red - Poor
+}
+
+function updateHealthInsights(score) {
+  const insights = [];
+  
+  if (score >= 80) {
+    insights.push({ icon: '🌟', text: 'Excellent financial health!' });
+    insights.push({ icon: '💎', text: 'Keep up the great savings habits' });
+  } else if (score >= 60) {
+    insights.push({ icon: '👍', text: 'Good financial habits' });
+    insights.push({ icon: '📈', text: 'Room for improvement in savings' });
+  } else if (score >= 40) {
+    insights.push({ icon: '⚠️', text: 'Consider budgeting improvements' });
+    insights.push({ icon: '💡', text: 'Track expenses more carefully' });
+  } else {
+    insights.push({ icon: '🚨', text: 'Focus on expense reduction' });
+    insights.push({ icon: '💼', text: 'Consider increasing income streams' });
+  }
+  
+  const container = document.getElementById('healthInsights');
+  if (container) {
+    container.innerHTML = insights.map(insight => `
+      <div class="insight-item">
+        <span class="insight-icon">${insight.icon}</span>
+        <span class="insight-text">${insight.text}</span>
+      </div>
+    `).join('');
+  }
+}
+
+function updateSmartInsights() {
+  if (!appData.chartData || !appData.chartData.financialInsights) return;
+  
+  const insights = appData.chartData.financialInsights;
+  
+  // Update metric values
+  document.getElementById('trueIncomeValue').textContent = 
+    '$' + insights.trueIncome.toLocaleString();
+  
+  document.getElementById('loanPaymentsValue').textContent = 
+    '$' + (appData.chartData.loanTracking?.totalPayments / 3 || 0).toLocaleString(); // Monthly avg
+    
+  document.getElementById('availableCashValue').textContent = 
+    '$' + insights.availableCashFlow.toLocaleString();
+    
+  document.getElementById('selfTransfersValue').textContent = 
+    '$' + insights.selfTransferAmount.toLocaleString();
+}
+
+function initializeLoanTracking(colors) {
+  // Show the loan analysis card
+  const loanCard = document.getElementById('loanAnalysisCard');
+  if (loanCard) {
+    loanCard.style.display = 'block';
+  }
+  
+  // Initialize loan payment chart
+  const ctx = document.getElementById('loanPaymentChart');
+  if (!ctx || !appData.chartData.loanTracking) return;
+  
+  if (charts.loanPayment) {
+    charts.loanPayment.destroy();
+  }
+  
+  const loanData = appData.chartData.loanTracking.monthlyData.filter(d => d.payment_type === 'Debt Payments');
+  
+  charts.loanPayment = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: loanData.map(d => {
+        const date = new Date(d.month + '-01');
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      }),
+      datasets: [{
+        label: 'Debt Payments (Loans + Credit Cards)',
+        data: loanData.map(d => d.amount),
+        borderColor: '#DC2626',
+        backgroundColor: 'rgba(220, 38, 38, 0.1)',
+        borderWidth: 3,
+        fill: true,
+        tension: 0.4,
+        pointBackgroundColor: '#DC2626',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: {
+            usePointStyle: true,
+            font: { size: 12, weight: '500' }
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          callbacks: {
+            label: function(context) {
+              return `${context.dataset.label}: $${context.parsed.y.toLocaleString()}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { size: 11 } }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: 'rgba(0,0,0,0.05)' },
+          ticks: {
+            font: { size: 11 },
+            callback: function(value) {
+              return '$' + (value >= 1000 ? (value/1000).toFixed(1) + 'K' : value);
+            }
+          }
+        }
+      }
+    }
+  });
+  
+  // Update loan insights
+  updateLoanInsights();
+}
+
+function updateLoanInsights() {
+  if (!appData.chartData.loanTracking) return;
+  
+  const loanTracking = appData.chartData.loanTracking;
+  const insights = [];
+  
+  // Total loan payments insight
+  if (loanTracking.totalPayments > 0) {
+    insights.push({
+      icon: '💸',
+      label: 'Total Loan Payments (90 days)',
+      value: `$${loanTracking.totalPayments.toLocaleString()}`
     });
   }
-
- // Expense Breakdown Chart
-  const expenseCtx = document.getElementById('expenseChart');
-  if (expenseCtx && appData.budgets.length > 0) {
-    if (charts.expense) {
-      charts.expense.destroy();
-    }
-    
-    charts.expense = new Chart(expenseCtx, {
-      type: 'doughnut',
-      data: {
-        labels: appData.budgets.map(b => b.category),
-        datasets: [{
-          data: appData.budgets.map(b => b.spent),
-          backgroundColor: [
-            '#1FB8CD', 
-            '#FFC185', 
-            '#B4413C', 
-            '#ECEBD5', 
-            '#5D878F',
-            '#D2BA4C',
-            '#A67C52'
-          ],
-          borderWidth: 2,
-          borderColor: '#fff',
-          hoverBorderWidth: 3
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: {
-              usePointStyle: true,
-              padding: 15,
-              generateLabels: function(chart) {
-                const original = Chart.defaults.plugins.legend.labels.generateLabels;
-                const labels = original.call(this, chart);
-                
-                // Add values to legend labels
-                labels.forEach((label, i) => {
-                  const value = chart.data.datasets[0].data[i];
-                  label.text += `: $${value.toLocaleString()}`;
-                });
-                
-                return labels;
-              }
-            }
-          },
-          tooltip: {
-            callbacks: {
-              label: function(context) {
-                const label = context.label || '';
-                const value = context.parsed;
-                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                const percentage = ((value / total) * 100).toFixed(1);
-                return `${label}: $${value.toLocaleString()} (${percentage}%)`;
-              }
-            }
-          }
-        }
-      }
+  
+  // Monthly average
+  if (loanTracking.monthlyData.length > 0) {
+    const monthlyAvg = loanTracking.totalPayments / 3; // Assuming 3 months data
+    insights.push({
+      icon: '📊',
+      label: 'Average Monthly Payment',
+      value: `$${monthlyAvg.toLocaleString()}`
     });
+  }
+  
+  // Net loan position
+  if (loanTracking.netPosition !== 0) {
+    const isPositive = loanTracking.netPosition > 0;
+    insights.push({
+      icon: isPositive ? '📈' : '📉',
+      label: isPositive ? 'Net Loan Received' : 'Net Loan Paid',
+      value: `$${Math.abs(loanTracking.netPosition).toLocaleString()}`
+    });
+  }
+  
+  // Cash flow impact
+  const cashFlowImpact = loanTracking.totalPayments / appData.chartData.financialInsights.trueIncome * 100;
+  if (cashFlowImpact > 0) {
+    insights.push({
+      icon: '⚖️',
+      label: 'Income Used for Loans',
+      value: `${cashFlowImpact.toFixed(1)}%`
+    });
+  }
+  
+  // Update UI
+  const container = document.getElementById('loanInsightsList');
+  if (container && insights.length > 0) {
+    container.innerHTML = insights.map(insight => `
+      <div class="loan-insight-item">
+        <div class="loan-insight-icon">${insight.icon}</div>
+        <div class="loan-insight-content">
+          <div class="loan-insight-label">${insight.label}</div>
+          <div class="loan-insight-value">${insight.value}</div>
+        </div>
+      </div>
+    `).join('');
   }
 }
 
@@ -468,12 +906,24 @@ function renderTransactionFilters() {
 }
 
 function renderTransactionTable() {
+  // Clear previous selection when re-rendering
+  if (typeof selectedTransactionIds !== 'undefined') {
+    selectedTransactionIds.clear();
+    const bulkActionsBar = document.getElementById('bulkActionsBar');
+    if (bulkActionsBar) {
+      bulkActionsBar.style.display = 'none';
+    }
+  }
+  
   const container = document.getElementById('transactionTable');
   
   container.innerHTML = `
-    <table>
+    <table class="transaction-table">
       <thead>
         <tr>
+          <th>
+            <input type="checkbox" id="selectAllTransactions" class="transaction-checkbox" title="Select All">
+          </th>
           <th>Date</th>
           <th>Description</th>
           <th>Category</th>
@@ -485,6 +935,9 @@ function renderTransactionTable() {
       <tbody>
         ${filteredTransactions.map(transaction => `
           <tr>
+            <td>
+              <input type="checkbox" class="transaction-checkbox transaction-select" data-id="${transaction.id}">
+            </td>
             <td>${formatDate(transaction.date)}</td>
             <td>${transaction.description}</td>
             <td><span class="status status--info">${transaction.category}</span></td>
@@ -518,6 +971,9 @@ function renderTransactionTable() {
       }
     });
   });
+
+  // Add bulk selection event listeners
+  setupBulkSelectionListeners();
 }
 
 async function editTransaction(id) {
@@ -557,6 +1013,138 @@ async function deleteTransaction(id) {
     }
   } catch (error) {
     console.error('Failed to delete transaction:', error);
+  }
+}
+
+// Bulk selection functionality
+let selectedTransactionIds = new Set();
+
+function setupBulkSelectionListeners() {
+  const selectAllCheckbox = document.getElementById('selectAllTransactions');
+  const individualCheckboxes = document.querySelectorAll('.transaction-select');
+  const bulkActionsBar = document.getElementById('bulkActionsBar');
+  const selectedCountSpan = document.getElementById('selectedCount');
+  const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+  const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+
+  // Select all checkbox functionality
+  if (selectAllCheckbox) {
+    selectAllCheckbox.addEventListener('change', function() {
+      const isChecked = this.checked;
+      selectedTransactionIds.clear();
+      
+      individualCheckboxes.forEach(checkbox => {
+        checkbox.checked = isChecked;
+        const row = checkbox.closest('tr');
+        if (isChecked) {
+          selectedTransactionIds.add(checkbox.dataset.id);
+          row.classList.add('selected');
+        } else {
+          row.classList.remove('selected');
+        }
+      });
+      
+      updateBulkActionsBar();
+    });
+  }
+
+  // Individual checkbox functionality
+  individualCheckboxes.forEach(checkbox => {
+    checkbox.addEventListener('change', function() {
+      const row = this.closest('tr');
+      const transactionId = this.dataset.id;
+      
+      if (this.checked) {
+        selectedTransactionIds.add(transactionId);
+        row.classList.add('selected');
+      } else {
+        selectedTransactionIds.delete(transactionId);
+        row.classList.remove('selected');
+      }
+      
+      // Update select all checkbox state
+      if (selectAllCheckbox) {
+        selectAllCheckbox.checked = selectedTransactionIds.size === individualCheckboxes.length;
+        selectAllCheckbox.indeterminate = selectedTransactionIds.size > 0 && selectedTransactionIds.size < individualCheckboxes.length;
+      }
+      
+      updateBulkActionsBar();
+    });
+  });
+
+  // Bulk delete functionality
+  if (bulkDeleteBtn) {
+    bulkDeleteBtn.addEventListener('click', async () => {
+      if (selectedTransactionIds.size === 0) return;
+      
+      if (confirm(`Are you sure you want to delete ${selectedTransactionIds.size} selected transaction${selectedTransactionIds.size > 1 ? 's' : ''}?`)) {
+        await bulkDeleteTransactions();
+      }
+    });
+  }
+
+  // Clear selection functionality
+  if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener('click', () => {
+      clearSelection();
+    });
+  }
+}
+
+function updateBulkActionsBar() {
+  const bulkActionsBar = document.getElementById('bulkActionsBar');
+  const selectedCountSpan = document.getElementById('selectedCount');
+  
+  if (selectedTransactionIds.size > 0) {
+    bulkActionsBar.style.display = 'flex';
+    selectedCountSpan.textContent = selectedTransactionIds.size;
+  } else {
+    bulkActionsBar.style.display = 'none';
+  }
+}
+
+function clearSelection() {
+  selectedTransactionIds.clear();
+  const selectAllCheckbox = document.getElementById('selectAllTransactions');
+  const individualCheckboxes = document.querySelectorAll('.transaction-select');
+  
+  if (selectAllCheckbox) {
+    selectAllCheckbox.checked = false;
+    selectAllCheckbox.indeterminate = false;
+  }
+  
+  individualCheckboxes.forEach(checkbox => {
+    checkbox.checked = false;
+    const row = checkbox.closest('tr');
+    row.classList.remove('selected');
+  });
+  
+  updateBulkActionsBar();
+}
+
+async function bulkDeleteTransactions() {
+  try {
+    const deletePromises = Array.from(selectedTransactionIds).map(id => 
+      apiRequest(`/transactions/${id}`, { method: 'DELETE' })
+    );
+    
+    await Promise.all(deletePromises);
+    
+    showToast(`Successfully deleted ${selectedTransactionIds.size} transaction${selectedTransactionIds.size > 1 ? 's' : ''}`);
+    
+    // Clear selection and refresh
+    clearSelection();
+    await loadTransactions();
+    renderTransactionTable();
+    
+    // Refresh dashboard if we're on it
+    if (currentPage === 'dashboard') {
+      await loadDashboardData();
+      renderRecentTransactions();
+    }
+  } catch (error) {
+    console.error('Failed to delete transactions:', error);
+    showToast('Failed to delete some transactions', 'error');
   }
 }
 
@@ -662,6 +1250,20 @@ async function applyTransactionFilters() {
   showToast('Filters applied successfully');
 }
 
+async function learnCategory(description, category) {
+  try {
+    await apiRequest('/transactions/learn-category', {
+      method: 'POST',
+      body: JSON.stringify({
+        descriptionSubstring: description.slice(0, 20), // Take first 20 chars of description
+        category
+      })
+    });
+  } catch (error) {
+    console.error('Failed to learn category:', error);
+  }
+}
+
 async function handleAddEditTransaction(e) {
   e.preventDefault();
   
@@ -675,11 +1277,20 @@ async function handleAddEditTransaction(e) {
   
   try {
     if (editingTransactionId) {
+      // Get the original transaction to check if category changed
+      const originalTransaction = appData.transactions.find(t => t.id == editingTransactionId);
+      
       // Update existing transaction
       await apiRequest(`/transactions/${editingTransactionId}`, {
         method: 'PUT',
         body: JSON.stringify(transactionData)
       });
+
+      // If category was changed, learn from this change
+      if (originalTransaction && originalTransaction.category !== transactionData.category) {
+        await learnCategory(transactionData.description, transactionData.category);
+      }
+
       showToast('Transaction updated successfully');
       editingTransactionId = null;
     } else {
@@ -1099,6 +1710,9 @@ async function uploadFileToBackend(file) {
     // Upload and parse the file
     const response = await fetch(`${API_BASE_URL}/upload-statement`, {
       method: 'POST',
+      headers: {
+        ...getAuthHeaders()
+      },
       body: formData
     });
     
@@ -1251,7 +1865,8 @@ async function processUpload() {
     const response = await fetch(`${API_BASE_URL}/import-transactions`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
       },
       body: JSON.stringify({
         transactions: uploadedTransactions,
@@ -1349,6 +1964,11 @@ function performSearch() {
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', async () => {
+  // Check authentication first
+  if (!checkAuth()) {
+    return;
+  }
+  
   try {
     await apiRequest('/health');
     console.log('API connection successful');
@@ -1358,6 +1978,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   
   initializeNavigation();
+  initializeUserInfo();
   await initializeDashboard();
   initializeSearch();
   
@@ -1409,7 +2030,148 @@ window.navigateToPage = function(page) {
   }
 };
 
+// User authentication functions
+function initializeUserInfo() {
+  const user = JSON.parse(localStorage.getItem('financeflow_user') || '{}');
+  if (user.firstName && user.lastName) {
+    const fullName = `${user.firstName} ${user.lastName}`;
+    const initials = `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`;
+    
+    // Update header elements
+    document.getElementById('userName').textContent = fullName;
+    document.getElementById('userAvatar').textContent = initials;
+    
+    // Update settings page elements
+    const userFullNameInput = document.getElementById('userFullName');
+    const userEmailInput = document.getElementById('userEmail');
+    
+    if (userFullNameInput) userFullNameInput.value = fullName;
+    if (userEmailInput) userEmailInput.value = user.email || '';
+  }
+}
+
+function handleLogout() {
+  if (confirm('Are you sure you want to logout?')) {
+    localStorage.removeItem('financeflow_token');
+    localStorage.removeItem('financeflow_user');
+    window.location.href = 'login.html';
+  }
+}
+
+// Account Functions
+async function initializeAccounts() {
+  try {
+    await loadAccounts();
+    renderAccountsGrid();
+    setupAccountEventListeners();
+  } catch (error) {
+    console.error('Failed to initialize accounts:', error);
+    showToast('Failed to load accounts', 'error');
+  }
+}
+
+function renderAccountsGrid() {
+  const container = document.getElementById('accountsGrid');
+  
+  container.innerHTML = appData.accounts.map(account => `
+    <div class="card account-card">
+      <div class="card__body">
+        <div class="account-header">
+          <div class="account-info">
+            <h3 class="account-name">${account.name}</h3>
+            <div class="account-details">
+              <span class="account-type">${account.type}</span>
+              <span class="account-institution">${account.institution}</span>
+            </div>
+          </div>
+          <div class="account-balance ${account.balance < 0 ? 'negative' : 'positive'}">
+            ${formatCurrency(account.balance)}
+          </div>
+        </div>
+        <div class="account-actions">
+          <button class="btn btn--sm btn--outline" onclick="editAccount(${account.id})">Edit</button>
+          <button class="btn btn--sm btn--outline delete-btn" onclick="deleteAccount(${account.id})">Delete</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function setupAccountEventListeners() {
+  const addAccountBtn = document.getElementById('addAccountBtn');
+  const addAccountModal = document.getElementById('addAccountModal');
+  const addAccountForm = document.getElementById('addAccountForm');
+  const cancelAccount = document.getElementById('cancelAccount');
+
+  if (addAccountBtn) {
+    addAccountBtn.addEventListener('click', () => {
+      addAccountModal.classList.add('active');
+    });
+  }
+
+  if (cancelAccount) {
+    cancelAccount.addEventListener('click', () => {
+      addAccountModal.classList.remove('active');
+      addAccountForm.reset();
+    });
+  }
+
+  if (addAccountForm) {
+    addAccountForm.addEventListener('submit', handleAddAccount);
+  }
+}
+
+async function handleAddAccount(e) {
+  e.preventDefault();
+  
+  const accountData = {
+    name: document.getElementById('accountName').value,
+    type: document.getElementById('accountType').value,
+    institution: document.getElementById('accountInstitution').value,
+    balance: parseFloat(document.getElementById('accountBalance').value) || 0,
+    amount: parseFloat(document.getElementById('accountBalance').value) || 0 // For validation
+  };
+
+  try {
+    await apiRequest('/accounts', {
+      method: 'POST',
+      body: JSON.stringify(accountData)
+    });
+
+    showToast('Account created successfully');
+    await loadAccounts();
+    renderAccountsGrid();
+    document.getElementById('addAccountModal').classList.remove('active');
+    e.target.reset();
+  } catch (error) {
+    console.error('Failed to create account:', error);
+  }
+}
+
+async function editAccount(id) {
+  // TODO: Implement edit functionality
+  showToast('Edit functionality coming soon', 'info');
+}
+
+async function deleteAccount(id) {
+  if (!confirm('Are you sure you want to delete this account? This will also delete all associated transactions.')) {
+    return;
+  }
+
+  try {
+    await apiRequest(`/accounts/${id}`, { method: 'DELETE' });
+    showToast('Account deleted successfully');
+    await loadAccounts();
+    renderAccountsGrid();
+  } catch (error) {
+    console.error('Failed to delete account:', error);
+  }
+}
+
 // Make functions available globally for HTML onclick events
 window.addMoneyToGoal = addMoneyToGoal;
 window.processUpload = processUpload;
 window.cancelUpload = cancelUpload;
+window.handleLogout = handleLogout;
+window.editAccount = editAccount;
+window.deleteAccount = deleteAccount;

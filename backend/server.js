@@ -5,16 +5,71 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const pdf = require('pdf-parse');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+// Import authentication middleware and routes
+const { authenticateToken, optionalAuth } = require('./middleware/auth');
+const authRoutes = require('./routes/auth');
+const { validationRules, handleValidationErrors, sanitizeInput, commonValidation } = require('./middleware/validation');
+
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false
+}));
+
+// Rate limiting (disabled for debugging)
+// if (process.env.NODE_ENV !== 'test') {
+//   const limiter = rateLimit({
+//     windowMs: 15 * 60 * 1000, // 15 minutes
+//     max: 100, // limit each IP to 100 requests per windowMs
+//     message: {
+//       error: 'Too many requests from this IP, please try again later.',
+//     },
+//     standardHeaders: true,
+//     legacyHeaders: false,
+//   });
+//   app.use('/api/', limiter);
+
+//   // Stricter rate limiting for auth routes
+//   const authLimiter = rateLimit({
+//     windowMs: 15 * 60 * 1000,
+//     max: 5, // limit each IP to 5 requests per 15 minutes for auth
+//     message: {
+//       error: 'Too many authentication attempts, please try again later.',
+//     },
+//     standardHeaders: true,
+//     legacyHeaders: false,
+//   });
+//   app.use('/api/auth', authLimiter);
+// }
 
 // Middleware
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:8000'
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(sanitizeInput); // Add input sanitization
 
 // File upload configuration
 const upload = multer({
@@ -37,6 +92,9 @@ const upload = multer({
 // Serve static files from the backend directory
 app.use(express.static(__dirname));
 
+// Auth routes
+app.use('/api/auth', authRoutes);
+
 // Database setup
 const dbPath = path.join(__dirname, 'database', 'database.db');
 const dbDir = path.dirname(dbPath);
@@ -51,12 +109,13 @@ const db = new sqlite3.Database(dbPath, (err) => {
     console.error('Error opening database:', err);
   } else {
     console.log('Connected to SQLite database');
+    runMigrations();
     initializeDatabase();
   }
 });
 
 // PDF Parsing Functions
-function parseEnhancedStatement(text) {
+async function parseEnhancedStatement(text) {
   const transactions = [];
   const lines = text.split('\n').map(line => line.trim()); // Trim all lines
   const datePattern = /^\d{2}\/\d{2}\/\d{2}$/; // Matches MM/DD/YY at the start of a string
@@ -129,7 +188,7 @@ function parseEnhancedStatement(text) {
   return transactions;
 }
 
-function parseChaseCreditCardStatement(text) {
+async function parseChaseCreditCardStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
 
@@ -180,7 +239,7 @@ function parseChaseCreditCardStatement(text) {
         date: parseDateString(dateStr, currentYear),
         description: description,
         amount: amount,
-        category: categorizeTransaction(description)
+        category: await categorizeTransaction(description)
       };
 
       transactions.push(transaction);
@@ -193,7 +252,7 @@ function parseChaseCreditCardStatement(text) {
 }
 
 
-function parseChaseCheckingStatement(text) {
+async function parseChaseCheckingStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
 
@@ -271,7 +330,7 @@ function parseChaseCheckingStatement(text) {
         date: parseDateString(dateStr, currentYear),
         description: description,
         amount: amount,
-        category: categorizeTransaction(description)
+        category: await categorizeTransaction(description)
       };
 
       transactions.push(transaction);
@@ -286,7 +345,7 @@ function parseChaseCheckingStatement(text) {
   return transactions;
 }
 
-function parseAppleCardStatement(text) {
+async function parseAppleCardStatement(text) {
   console.log('=== PARSING APPLE CARD PDF STATEMENT ===');
   const transactions = [];
 
@@ -325,7 +384,7 @@ function parseAppleCardStatement(text) {
           date,
           description,
           amount,
-          category: categorizeTransaction(description),
+          category: await categorizeTransaction(description),
         });
       }
     } catch (e) {
@@ -374,7 +433,7 @@ function parseAppleCardStatement(text) {
 
 
 
-function parseCSVStatement(text) {
+async function parseCSVStatement(text) {
   console.log('=== PARSING GENERIC CSV ===');
   const transactions = [];
   const lines = text.split('\n');
@@ -444,7 +503,7 @@ function parseCSVStatement(text) {
             date,
             description,
             amount,
-            category: categorizeTransaction(description)
+            category: await categorizeTransaction(description)
           });
         }
       } catch (error) {
@@ -456,7 +515,7 @@ function parseCSVStatement(text) {
   return transactions;
 }
 
-function parseChaseCheckingCSV(text) {
+async function parseChaseCheckingCSV(text) {
   console.log('=== PARSING CHASE CHECKING CSV ===');
   const transactions = [];
   const lines = text.split('\n');
@@ -525,7 +584,7 @@ function parseChaseCheckingCSV(text) {
           description,
           amount,
           // For a checking account, the sign is already correct. No flipping needed.
-          category: categorizeTransaction(description)
+          category: await categorizeTransaction(description)
         });
       }
     } catch (error) {
@@ -537,7 +596,7 @@ function parseChaseCheckingCSV(text) {
   return transactions;
 }
 
-function parseChaseCreditCardCSV(text) {
+async function parseChaseCreditCardCSV(text) {
   console.log('=== PARSING CHASE CREDIT CARD CSV ===');
   const transactions = [];
   const lines = text.split('\n');
@@ -579,7 +638,7 @@ function parseChaseCreditCardCSV(text) {
           amount,
           // The signs in this CSV are already correct for our app's logic!
           // A Sale is negative, a Payment/Return is positive. No flipping needed.
-          category: categorizeTransaction(description)
+          category: await categorizeTransaction(description)
         });
       }
     } catch (error) {
@@ -591,7 +650,7 @@ function parseChaseCreditCardCSV(text) {
   return transactions;
 }
 
-function parseBofACheckingCSV(text) {
+async function parseBofACheckingCSV(text) {
   console.log('=== PARSING BANK OF AMERICA CHECKING CSV ===');
   const transactions = [];
   const lines = text.split('\n');
@@ -706,7 +765,7 @@ function parseBofACheckingCSV(text) {
         date: date, // Use the ISO date string directly, no need to parse again
         description: description,
         amount: amount,
-        category: categorizeTransaction(description)
+        category: await categorizeTransaction(description)
       };
 
       transactions.push(transaction);
@@ -719,7 +778,7 @@ function parseBofACheckingCSV(text) {
   return transactions;
 }
 
-function parseBofACreditCardCSV(text) {
+async function parseBofACreditCardCSV(text) {
   console.log('=== PARSING BANK OF AMERICA CREDIT CARD CSV (v3 - Robust) ===');
   const transactions = [];
   const lines = text.split('\n');
@@ -797,7 +856,7 @@ function parseBofACreditCardCSV(text) {
           description,
           amount,
           // BofA credit card CSVs have correct signs: payments are positive, purchases are negative.
-          category: categorizeTransaction(description)
+          category: await categorizeTransaction(description)
         });
       }
     } catch (error) {
@@ -835,7 +894,7 @@ function parseCSVLine(line) {
 }
 
 // Add a generic statement parser for better coverage
-function parseGenericStatement(text) {
+async function parseGenericStatement(text) {
   const transactions = [];
   const lines = text.split('\n');
 
@@ -891,7 +950,7 @@ function parseGenericStatement(text) {
           if (isNaN(amount)) continue;
 
           // Categorize transaction
-          const category = categorizeTransaction(description);
+          const category = await categorizeTransaction(description);
 
           transactions.push({
             date,
@@ -971,7 +1030,21 @@ function parseDateString(dateStr, currentYear = new Date().getFullYear()) {
   return null;
 }
 
-function categorizeTransaction(description) {
+async function categorizeTransaction(description) {
+  // 1. First, try to find a user-mapped category
+  const matching = await new Promise((resolve, reject) => {
+    db.get(
+      "SELECT category FROM merchant_category_map WHERE ? LIKE '%' || description_substring || '%'",
+      [description],
+      (err, row) => {
+        if (err) return resolve(null); // fallback to default
+        resolve(row ? row.category : null);
+      }
+    );
+  });
+  if (matching) return matching;
+
+  // 2. Fallback to keyword-based logic
   const desc = description.toLowerCase();
 
   // Food & Dining
@@ -1028,8 +1101,8 @@ function categorizeTransaction(description) {
   return 'Shopping';
 }
 
-// File upload endpoint with better error handling and debugging
-app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
+// File upload endpoint with better error handling and debugging (protected)
+app.post('/api/upload-statement', authenticateToken, upload.single('file'), validationRules.uploadValidation, handleValidationErrors, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -1054,22 +1127,22 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
           // Attempt to identify the bank and use the correct parser
           if (lowerCaseText.includes('apple card') && lowerCaseText.includes('goldman sachs')) {
               console.log('Detected Apple Card statement. Using Apple Card parser.');
-              transactions = parseAppleCardStatement(text);
+              transactions = await parseAppleCardStatement(text);
           } else if (lowerCaseText.includes('bank of america')) {
               console.log('Detected Bank of America statement. Using BofA parser.');
-              transactions = parseEnhancedStatement(text);
+              transactions = await parseEnhancedStatement(text);
           } else if (lowerCaseText.includes('chase') && lowerCaseText.includes('checking summary')) {
               console.log('Detected Chase Checking statement. Using Chase Checking parser.');
-              transactions = parseChaseCheckingStatement(text);
+              transactions = await parseChaseCheckingStatement(text);
           } else if (lowerCaseText.includes('chase')) {
               console.log('Detected Chase Credit Card statement. Using Chase Credit Card parser.');
-              transactions = parseChaseCreditCardStatement(text);
+              transactions = await parseChaseCreditCardStatement(text);
           }
 
           // If no bank-specific parser worked, try the generic one as a fallback
           if (transactions.length === 0) {
             console.log('Bank-specific parser found no transactions. Trying generic fallback...');
-            transactions = parseGenericStatement(text);
+            transactions = await parseGenericStatement(text);
             console.log(`Generic fallback parser found ${transactions.length} transactions`);
           }
           
@@ -1104,34 +1177,34 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
         // Check for Chase CSVs first (more specific patterns)
         if (lowerCaseText.includes('posting date') && lowerCaseText.includes('type') && lowerCaseText.includes('check or slip #')) {
           console.log('Detected Chase Checking CSV. Using specialized parser.');
-          transactions = parseChaseCheckingCSV(text);
+          transactions = await parseChaseCheckingCSV(text);
         } else if (lowerCaseText.includes('transaction date') && lowerCaseText.includes('category') && lowerCaseText.includes('post date')) {
           console.log('Detected Chase Credit Card CSV. Using specialized parser.');
-          transactions = parseChaseCreditCardCSV(text);
+          transactions = await parseChaseCreditCardCSV(text);
         
         // Then check for Bank of America CSVs
         } else if (lowerCaseText.includes('posted date') && lowerCaseText.includes('reference number') && lowerCaseText.includes('payee')) {
           console.log('Detected Bank of America Credit Card CSV. Using specialized parser.');
-          transactions = parseBofACreditCardCSV(text);
+          transactions = await parseBofACreditCardCSV(text);
         } else if (lowerCaseText.includes('running bal.') && lowerCaseText.includes('date,description,amount')) {
           console.log('Detected Bank of America Checking CSV. Using specialized parser.');
-          transactions = parseBofACheckingCSV(text);
+          transactions = await parseBofACheckingCSV(text);
           
           // If BofA parser didn't work, try the generic CSV parser
           if (transactions.length === 0) {
             console.log('BofA parser found no transactions, trying generic CSV parser...');
-            transactions = parseCSVStatement(text);
+            transactions = await parseCSVStatement(text);
           }
 
         // Generic CSV fallback
         } else if (lowerCaseText.includes('posting date') && lowerCaseText.includes('check or slip')) {
           console.log('Detected Chase Checking CSV. Using specialized parser.');
-          transactions = parseChaseCheckingCSV(text);
+          transactions = await parseChaseCheckingCSV(text);
 
         // Fallback for any other CSV format
         } else {
           console.log('Using generic CSV parser.');
-          transactions = parseCSVStatement(text);
+          transactions = await parseCSVStatement(text);
         }
 
       } catch (csvError) {
@@ -1176,8 +1249,8 @@ app.post('/api/upload-statement', upload.single('file'), async (req, res) => {
   }
 });
 
-// Debug endpoint to see raw PDF text extraction
-app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
+// Debug endpoint to see raw PDF text extraction (protected)
+app.post('/api/debug-pdf', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -1231,8 +1304,8 @@ app.post('/api/debug-pdf', upload.single('file'), async (req, res) => {
   }
 });
 
-// Improved import transactions endpoint
-app.post('/api/import-transactions', (req, res) => {
+// Improved import transactions endpoint (protected)
+app.post('/api/import-transactions', authenticateToken, validationRules.importTransactions, handleValidationErrors, async (req, res) => {
   const { transactions, accountName } = req.body;
 
   if (!transactions || !Array.isArray(transactions)) {
@@ -1419,9 +1492,9 @@ app.post('/api/import-transactions', (req, res) => {
   });
 });
 
-// Get available accounts for import dropdown
-app.get('/api/accounts/for-import', (req, res) => {
-  db.all("SELECT id, name, type, institution FROM accounts ORDER BY name", (err, rows) => {
+// Get available accounts for import dropdown (protected)
+app.get('/api/accounts/for-import', authenticateToken, (req, res) => {
+  db.all("SELECT id, name, type, institution FROM accounts WHERE user_id = ? OR user_id IS NULL ORDER BY name", [req.userId], (err, rows) => {
     if (err) {
       console.error('Error fetching accounts for import:', err);
       res.status(500).json({ error: err.message });
@@ -1439,8 +1512,8 @@ app.get('/api/accounts/for-import', (req, res) => {
   });
 });
 
-// Import history tracking (optional enhancement)
-app.get('/api/import-history', (req, res) => {
+// Import history tracking (protected)
+app.get('/api/import-history', authenticateToken, (req, res) => {
   // This would require a new table to track import history
   // For now, we can return recent transactions grouped by account
   db.all(`
@@ -1645,6 +1718,43 @@ app.get('/admin', (req, res) => {
   res.send(adminHtml);
 });
 
+// Run database migrations
+function runMigrations() {
+  console.log('Running database migrations...');
+  
+  // Read and execute migration file
+  const migrationPath = path.join(__dirname, 'database', 'migrations', '001_add_users_table.sql');
+  
+  if (fs.existsSync(migrationPath)) {
+    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+    
+    // Split by semicolon and execute each statement
+    const statements = migrationSQL.split(';').filter(stmt => stmt.trim().length > 0);
+    
+    db.serialize(() => {
+      statements.forEach((statement, index) => {
+        db.run(statement.trim(), (err) => {
+          if (err && !err.message.includes('duplicate column name')) {
+            console.error(`Migration statement ${index + 1} error:`, err.message);
+          }
+        });
+      });
+    });
+    
+    console.log('Database migrations completed');
+  } else {
+    console.log('No migration file found, skipping migrations');
+  }
+
+  // Create merchant category mapping table if it doesn't exist
+  db.run(`CREATE TABLE IF NOT EXISTS merchant_category_map (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    description_substring TEXT NOT NULL,
+    category TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+}
+
 // Initialize database with tables
 function initializeDatabase() {
   db.serialize(() => {
@@ -1731,41 +1841,13 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'FinanceFlow Pro API is running with PDF parsing support' });
 });
 
-// Data management endpoints
-app.post('/api/admin/clear-all-data', (req, res) => {
-  db.serialize(() => {
-    db.run("DELETE FROM transactions");
-    db.run("DELETE FROM accounts");
-    db.run("DELETE FROM budgets");
-    db.run("DELETE FROM goals");
-    db.run("DELETE FROM investments");
+// NOTE: Admin endpoints have been removed for security
+// Use the main app's account management instead
 
-    res.json({ message: "All data cleared successfully" });
-    console.log('All data cleared by admin');
-  });
-});
-
-app.post('/api/admin/reset-to-sample', (req, res) => {
-  db.serialize(() => {
-    // Clear existing data
-    db.run("DELETE FROM transactions");
-    db.run("DELETE FROM accounts");
-    db.run("DELETE FROM budgets");
-    db.run("DELETE FROM goals");
-    db.run("DELETE FROM investments");
-
-    // Re-insert sample data
-    setTimeout(() => {
-      insertSampleData();
-      res.json({ message: "Database reset to sample data successfully" });
-      console.log('Database reset to sample data by admin');
-    }, 100);
-  });
-});
-
-// Accounts
-app.get('/api/accounts', (req, res) => {
-  db.all("SELECT * FROM accounts ORDER BY id", (err, rows) => {
+// Accounts (protected routes)
+app.get('/api/accounts', authenticateToken, (req, res) => {
+  const userId = req.userId;
+  db.all("SELECT * FROM accounts WHERE user_id = ? OR user_id IS NULL ORDER BY id", [userId], (err, rows) => {
     if (err) {
       console.error('Error fetching accounts:', err);
       res.status(500).json({ error: err.message });
@@ -1775,15 +1857,15 @@ app.get('/api/accounts', (req, res) => {
   });
 });
 
-app.post('/api/accounts', (req, res) => {
+app.post('/api/accounts', authenticateToken, validationRules.createAccount, handleValidationErrors, (req, res) => {
   const { name, type, balance, institution } = req.body;
 
   if (!name || !type || balance === undefined || !institution) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  db.run("INSERT INTO accounts (name, type, balance, institution) VALUES (?, ?, ?, ?)",
-    [name, type, balance, institution], function(err) {
+  db.run("INSERT INTO accounts (name, type, balance, institution, user_id) VALUES (?, ?, ?, ?, ?)",
+    [name, type, balance, institution, req.userId], function(err) {
     if (err) {
       console.error('Error creating account:', err);
       res.status(500).json({ error: err.message });
@@ -1793,11 +1875,11 @@ app.post('/api/accounts', (req, res) => {
   });
 });
 
-// Transactions
-app.get('/api/transactions', (req, res) => {
+// Transactions (protected routes)
+app.get('/api/transactions', authenticateToken, validationRules.getTransactions, handleValidationErrors, (req, res) => {
   const { category, account, dateFrom, dateTo } = req.query;
-  let query = "SELECT * FROM transactions WHERE 1=1";
-  let params = [];
+  let query = "SELECT t.* FROM transactions t LEFT JOIN accounts a ON t.account_name = a.name WHERE (a.user_id = ? OR a.user_id IS NULL)";
+  let params = [req.userId];
 
   if (category) {
     query += " AND category = ?";
@@ -1828,7 +1910,7 @@ app.get('/api/transactions', (req, res) => {
   });
 });
 
-app.post('/api/transactions', (req, res) => {
+app.post('/api/transactions', authenticateToken, validationRules.createTransaction, handleValidationErrors, (req, res) => {
   const { date, description, amount, category, account_name } = req.body;
 
   if (!date || !description || amount === undefined || !category || !account_name) {
@@ -1867,7 +1949,7 @@ app.post('/api/transactions', (req, res) => {
   });
 });
 
-app.put('/api/transactions/:id', (req, res) => {
+app.put('/api/transactions/:id', authenticateToken, validationRules.updateTransaction, handleValidationErrors, (req, res) => {
   const { id } = req.params;
   const { date, description, amount, category, account_name } = req.body;
 
@@ -1915,11 +1997,11 @@ app.put('/api/transactions/:id', (req, res) => {
   });
 });
 
-app.delete('/api/transactions/:id', (req, res) => {
+app.delete('/api/transactions/:id', authenticateToken, [commonValidation.id()], handleValidationErrors, (req, res) => {
   const { id } = req.params;
 
-  // First get the transaction to reverse account balance
-  db.get("SELECT * FROM transactions WHERE id = ?", [id], (err, transaction) => {
+  // First get the transaction and verify it belongs to the user
+  db.get("SELECT t.* FROM transactions t LEFT JOIN accounts a ON t.account_name = a.name WHERE t.id = ? AND (a.user_id = ? OR a.user_id IS NULL)", [id, req.userId], (err, transaction) => {
     if (err) {
       console.error('Error fetching transaction for deletion:', err);
       return res.status(500).json({ error: err.message });
@@ -1949,34 +2031,40 @@ app.delete('/api/transactions/:id', (req, res) => {
   });
 });
 
-// Dashboard summary
-app.get('/api/dashboard', (req, res) => {
+// Dashboard summary (protected route)
+app.get('/api/dashboard', authenticateToken, (req, res) => {
   const summary = {};
 
-  // Get total balance
-  db.get("SELECT SUM(balance) as total_balance FROM accounts", (err, row) => {
+  // Get total balance for user's accounts only
+  db.get("SELECT ROUND(SUM(balance), 2) as total_balance FROM accounts WHERE user_id = ?", [req.userId], (err, row) => {
     if (err) {
       console.error('Error fetching dashboard data:', err);
       res.status(500).json({ error: err.message });
     } else {
       summary.total_balance = row.total_balance || 0;
 
-      // Get recent transactions for expense calculation
-      db.all("SELECT SUM(amount) as total_expenses FROM transactions WHERE amount < 0 AND date >= date('now', '-30 days')", (expenseErr, expenseRow) => {
+      // Get recent transactions for expense calculation (user's transactions only)
+      // Use last 90 days to capture more data for meaningful calculations
+      db.all(`SELECT ROUND(SUM(amount), 2) as total_expenses FROM transactions 
+              WHERE amount < 0 AND date >= date('now', '-90 days') 
+              AND account_name IN (SELECT name FROM accounts WHERE user_id = ?)`, [req.userId], (expenseErr, expenseRow) => {
         if (expenseErr) {
           console.error('Error calculating expenses:', expenseErr);
         }
 
-        // Get recent income
-        db.all("SELECT SUM(amount) as total_income FROM transactions WHERE amount > 0 AND date >= date('now', '-30 days')", (incomeErr, incomeRow) => {
+        // Get recent income (user's transactions only)
+        // Use last 90 days to capture more data for meaningful calculations
+        db.all(`SELECT ROUND(SUM(amount), 2) as total_income FROM transactions 
+                WHERE amount > 0 AND date >= date('now', '-90 days') 
+                AND account_name IN (SELECT name FROM accounts WHERE user_id = ?)`, [req.userId], (incomeErr, incomeRow) => {
           if (incomeErr) {
             console.error('Error calculating income:', incomeErr);
           }
 
           const monthlyExpenses = Math.abs(expenseRow?.[0]?.total_expenses || 0);
           const monthlyIncome = incomeRow?.[0]?.total_income || 0;
-          const savingsAmount = monthlyIncome - monthlyExpenses;
-          const savingsRate = monthlyIncome > 0 ? ((savingsAmount / monthlyIncome) * 100) : 0;
+          const savingsAmount = Math.round((monthlyIncome - monthlyExpenses) * 100) / 100;
+          const savingsRate = monthlyIncome > 0 ? Math.round(((savingsAmount / monthlyIncome) * 100) * 10) / 10 : 0;
 
           // Generate realistic monthly data based on actual data or show empty state
           let monthlyData = [];
@@ -2021,7 +2109,7 @@ app.get('/api/dashboard', (req, res) => {
           summary.monthly_data = monthlyData;
           summary.monthly_income = monthlyIncome; // No fallback - show actual $0
           summary.monthly_expenses = monthlyExpenses; // No fallback - show actual $0
-          summary.savings_rate = Math.round(savingsRate * 10) / 10;
+          summary.savings_rate = savingsRate;
 
           res.json(summary);
         });
@@ -2030,9 +2118,9 @@ app.get('/api/dashboard', (req, res) => {
   });
 });
 
-// Budgets
-app.get('/api/budgets', (req, res) => {
-  db.all("SELECT * FROM budgets ORDER BY category", (err, rows) => {
+// Budgets (protected routes)
+app.get('/api/budgets', authenticateToken, (req, res) => {
+  db.all("SELECT * FROM budgets WHERE user_id = ? OR user_id IS NULL ORDER BY category", [req.userId], (err, rows) => {
     if (err) {
       console.error('Error fetching budgets:', err);
       res.status(500).json({ error: err.message });
@@ -2042,15 +2130,15 @@ app.get('/api/budgets', (req, res) => {
   });
 });
 
-app.post('/api/budgets', (req, res) => {
+app.post('/api/budgets', authenticateToken, validationRules.createBudget, handleValidationErrors, (req, res) => {
   const { category, budgeted } = req.body;
 
   if (!category || budgeted === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  db.run("INSERT OR REPLACE INTO budgets (category, budgeted, spent, remaining) VALUES (?, ?, 0, ?)",
-    [category, budgeted, budgeted], function(err) {
+  db.run("INSERT OR REPLACE INTO budgets (category, budgeted, spent, remaining, user_id) VALUES (?, ?, 0, ?, ?)",
+    [category, budgeted, budgeted, req.userId], function(err) {
     if (err) {
       console.error('Error creating/updating budget:', err);
       res.status(500).json({ error: err.message });
@@ -2060,9 +2148,9 @@ app.post('/api/budgets', (req, res) => {
   });
 });
 
-// Goals
-app.get('/api/goals', (req, res) => {
-  db.all("SELECT * FROM goals ORDER BY deadline", (err, rows) => {
+// Goals (protected routes)
+app.get('/api/goals', authenticateToken, (req, res) => {
+  db.all("SELECT * FROM goals WHERE user_id = ? OR user_id IS NULL ORDER BY deadline", [req.userId], (err, rows) => {
     if (err) {
       console.error('Error fetching goals:', err);
       res.status(500).json({ error: err.message });
@@ -2072,15 +2160,15 @@ app.get('/api/goals', (req, res) => {
   });
 });
 
-app.post('/api/goals', (req, res) => {
+app.post('/api/goals', authenticateToken, validationRules.createGoal, handleValidationErrors, (req, res) => {
   const { name, target, current, deadline } = req.body;
 
   if (!name || target === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  db.run("INSERT INTO goals (name, target, current, deadline) VALUES (?, ?, ?, ?)",
-    [name, target, current || 0, deadline], function(err) {
+  db.run("INSERT INTO goals (name, target, current, deadline, user_id) VALUES (?, ?, ?, ?, ?)",
+    [name, target, current || 0, deadline, req.userId], function(err) {
     if (err) {
       console.error('Error creating goal:', err);
       res.status(500).json({ error: err.message });
@@ -2090,7 +2178,7 @@ app.post('/api/goals', (req, res) => {
   });
 });
 
-app.put('/api/goals/:id', (req, res) => {
+app.put('/api/goals/:id', authenticateToken, validationRules.updateGoal, handleValidationErrors, (req, res) => {
   const { id } = req.params;
   const { current } = req.body;
 
@@ -2108,7 +2196,7 @@ app.put('/api/goals/:id', (req, res) => {
   });
 });
 
-app.delete('/api/goals/:id', (req, res) => {
+app.delete('/api/goals/:id', authenticateToken, [commonValidation.id()], handleValidationErrors, (req, res) => {
   const { id } = req.params;
 
   db.run("DELETE FROM goals WHERE id = ?", [id], function(err) {
@@ -2121,9 +2209,9 @@ app.delete('/api/goals/:id', (req, res) => {
   });
 });
 
-// Investments
-app.get('/api/investments', (req, res) => {
-  db.all("SELECT * FROM investments ORDER BY symbol", (err, rows) => {
+// Investments (protected routes)
+app.get('/api/investments', authenticateToken, (req, res) => {
+  db.all("SELECT * FROM investments WHERE user_id = ? OR user_id IS NULL ORDER BY symbol", [req.userId], (err, rows) => {
     if (err) {
       console.error('Error fetching investments:', err);
       res.status(500).json({ error: err.message });
@@ -2133,15 +2221,15 @@ app.get('/api/investments', (req, res) => {
   });
 });
 
-app.post('/api/investments', (req, res) => {
+app.post('/api/investments', authenticateToken, validationRules.createInvestment, handleValidationErrors, (req, res) => {
   const { symbol, name, shares, value, gain_loss } = req.body;
 
   if (!symbol || !name || shares === undefined || value === undefined) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  db.run("INSERT INTO investments (symbol, name, shares, value, gain_loss) VALUES (?, ?, ?, ?, ?)",
-    [symbol, name, shares, value, gain_loss || "0%"], function(err) {
+  db.run("INSERT INTO investments (symbol, name, shares, value, gain_loss, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+    [symbol, name, shares, value, gain_loss || "0%", req.userId], function(err) {
     if (err) {
       console.error('Error creating investment:', err);
       res.status(500).json({ error: err.message });
@@ -2160,6 +2248,209 @@ app.get('/api/categories', (req, res) => {
   res.json(categories);
 });
 
+// Enhanced chart data endpoint (protected route)
+app.get('/api/charts/data', authenticateToken, (req, res) => {
+  const userId = req.userId;
+
+  // Get monthly income/expense data for the last 12 months
+  const monthlyQuery = `
+    SELECT 
+      strftime('%Y-%m', date) as month,
+      ROUND(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 2) as income,
+      ROUND(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 2) as expenses
+    FROM transactions t 
+    LEFT JOIN accounts a ON t.account_name = a.name 
+    WHERE (a.user_id = ? OR a.user_id IS NULL) 
+      AND date >= date('now', '-12 months')
+    GROUP BY strftime('%Y-%m', date)
+    ORDER BY month ASC
+  `;
+
+  // Get category breakdown for expenses
+  const expenseCategoryQuery = `
+    SELECT 
+      category,
+      ROUND(ABS(SUM(amount)), 2) as amount
+    FROM transactions t 
+    LEFT JOIN accounts a ON t.account_name = a.name 
+    WHERE (a.user_id = ? OR a.user_id IS NULL) 
+      AND amount < 0 
+      AND date >= date('now', '-90 days')
+    GROUP BY category
+    ORDER BY amount DESC
+  `;
+
+  // Get intelligent income categorization
+  const smartIncomeCategoryQuery = `
+    SELECT 
+      CASE
+        -- Main income sources (salary, wages, employment)
+        WHEN (LOWER(description) LIKE '%salary%' OR LOWER(description) LIKE '%payroll%' 
+              OR LOWER(description) LIKE '%wages%' OR LOWER(description) LIKE '%employment%'
+              OR LOWER(description) LIKE '%public partnership%' OR LOWER(description) LIKE '%employer%'
+              OR (category = 'Income' AND amount > 1000)) 
+        THEN '💼 Primary Income'
+        
+        -- Self transfers (transfers between own accounts)
+        WHEN (LOWER(description) LIKE '%transfer%' OR LOWER(description) LIKE '%tfrfrom%'
+              OR LOWER(description) LIKE '%tfrto%' OR LOWER(description) LIKE '%internal%'
+              OR LOWER(description) LIKE '%zelle%' OR LOWER(description) LIKE '%venmo%'
+              OR LOWER(description) LIKE '%self%' OR LOWER(description) LIKE '%own account%')
+        THEN '🔄 Self Transfers'
+        
+        -- Loan disbursements
+        WHEN (LOWER(description) LIKE '%loan%' OR LOWER(description) LIKE '%disbursement%'
+              OR LOWER(description) LIKE '%credit line%' OR LOWER(description) LIKE '%advance%')
+        THEN '🏦 Loan Disbursement'
+        
+        -- Investment/side income
+        WHEN (LOWER(description) LIKE '%investment%' OR LOWER(description) LIKE '%dividend%'
+              OR LOWER(description) LIKE '%interest%' OR LOWER(description) LIKE '%freelance%'
+              OR LOWER(description) LIKE '%gig%' OR LOWER(description) LIKE '%side%')
+        THEN '📈 Investment/Side Income'
+        
+        -- Refunds and reimbursements
+        WHEN (LOWER(description) LIKE '%refund%' OR LOWER(description) LIKE '%reimburse%'
+              OR LOWER(description) LIKE '%cashback%' OR LOWER(description) LIKE '%reward%')
+        THEN '💰 Refunds/Rewards'
+        
+        ELSE '📊 Other Income'
+      END as income_type,
+      COUNT(*) as transaction_count,
+      ROUND(SUM(amount), 2) as total_amount,
+      ROUND(AVG(amount), 2) as avg_amount
+    FROM transactions t 
+    LEFT JOIN accounts a ON t.account_name = a.name 
+    WHERE (a.user_id = ? OR a.user_id IS NULL) 
+      AND amount > 0 
+      AND date >= date('now', '-90 days')
+      -- EXCLUDE credit card payments, loan payments, and other debt payments from income
+      AND NOT (LOWER(description) LIKE '%credit card%payment%' OR LOWER(description) LIKE '%cc payment%'
+               OR LOWER(description) LIKE '%visa payment%' OR LOWER(description) LIKE '%mastercard payment%'
+               OR LOWER(description) LIKE '%loan%payment%' OR LOWER(description) LIKE '%mortgage payment%')
+    GROUP BY income_type
+    ORDER BY total_amount DESC
+  `;
+  
+  // Get loan and debt payment tracking (including credit cards)
+  const loanTrackingQuery = `
+    SELECT 
+      strftime('%Y-%m', date) as month,
+      CASE
+        WHEN LOWER(description) LIKE '%loan%payment%' OR LOWER(description) LIKE '%loan payment%'
+             OR LOWER(description) LIKE '%student loan%' OR LOWER(description) LIKE '%mortgage%'
+             OR LOWER(description) LIKE '%car payment%' OR LOWER(description) LIKE '%personal loan%'
+             OR LOWER(description) LIKE '%credit card%payment%' OR LOWER(description) LIKE '%cc payment%'
+             OR LOWER(description) LIKE '%visa payment%' OR LOWER(description) LIKE '%mastercard payment%'
+        THEN 'Debt Payments'
+        WHEN LOWER(description) LIKE '%loan%' AND amount > 0
+        THEN 'Loan Disbursement'
+        ELSE NULL
+      END as payment_type,
+      COUNT(*) as transaction_count,
+      ROUND(SUM(ABS(amount)), 2) as amount
+    FROM transactions t 
+    LEFT JOIN accounts a ON t.account_name = a.name 
+    WHERE (a.user_id = ? OR a.user_id IS NULL) 
+      AND (LOWER(description) LIKE '%loan%' OR LOWER(description) LIKE '%mortgage%' 
+           OR LOWER(description) LIKE '%credit card%' OR LOWER(description) LIKE '%cc payment%'
+           OR LOWER(description) LIKE '%visa%' OR LOWER(description) LIKE '%mastercard%')
+      AND date >= date('now', '-12 months')
+      AND payment_type IS NOT NULL
+    GROUP BY month, payment_type
+    ORDER BY month ASC
+  `;
+
+  // Execute all queries
+  db.all(monthlyQuery, [userId], (err, monthlyData) => {
+    if (err) {
+      console.error('Error fetching monthly data:', err);
+      return res.status(500).json({ error: err.message });
+    }
+
+    db.all(expenseCategoryQuery, [userId], (expenseErr, expenseCategories) => {
+      if (expenseErr) {
+        console.error('Error fetching expense categories:', expenseErr);
+        return res.status(500).json({ error: expenseErr.message });
+      }
+
+      db.all(smartIncomeCategoryQuery, [userId], (incomeErr, smartIncomeCategories) => {
+        if (incomeErr) {
+          console.error('Error fetching smart income categories:', incomeErr);
+          return res.status(500).json({ error: incomeErr.message });
+        }
+
+        db.all(loanTrackingQuery, [userId], (loanErr, loanData) => {
+          if (loanErr) {
+            console.error('Error fetching loan data:', loanErr);
+            return res.status(500).json({ error: loanErr.message });
+          }
+
+          // Format monthly data with proper month names
+          const formattedMonthlyData = monthlyData.map(row => {
+            const [year, month] = row.month.split('-');
+            const monthName = new Date(year, month - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+            return {
+              month: monthName,
+              income: row.income,
+              expenses: row.expenses,
+              net: row.income - row.expenses
+            };
+          });
+
+          // Process loan data for visualization
+          const loanSummary = loanData.reduce((acc, row) => {
+            if (!acc[row.payment_type]) {
+              acc[row.payment_type] = { total: 0, months: [], avgMonthly: 0 };
+            }
+            acc[row.payment_type].total += row.amount;
+            acc[row.payment_type].months.push({ month: row.month, amount: row.amount });
+            return acc;
+          }, {});
+
+          // Calculate loan insights (now includes credit card payments)
+          const totalDebtPayments = loanSummary['Debt Payments']?.total || 0;
+          const totalLoanDisbursements = loanSummary['Loan Disbursement']?.total || 0;
+          const netLoanPosition = totalLoanDisbursements - totalDebtPayments;
+
+          // Separate true income from self transfers and loans
+          const trueIncomeCategories = smartIncomeCategories.filter(cat => 
+            cat.income_type !== '🔄 Self Transfers' && cat.income_type !== '🏦 Loan Disbursement'
+          );
+          const selfTransferAmount = smartIncomeCategories.find(cat => cat.income_type === '🔄 Self Transfers')?.total_amount || 0;
+          const loanDisbursementAmount = smartIncomeCategories.find(cat => cat.income_type === '🏦 Loan Disbursement')?.total_amount || 0;
+
+          res.json({
+            monthlyData: formattedMonthlyData,
+            expenseCategories: expenseCategories,
+            incomeCategories: trueIncomeCategories.map(cat => ({
+              category: cat.income_type,
+              total: cat.total_amount,
+              count: cat.transaction_count,
+              avg: cat.avg_amount
+            })),
+            loanTracking: {
+              summary: loanSummary,
+              totalPayments: totalDebtPayments, // Now includes credit card payments
+              totalDisbursements: totalLoanDisbursements,
+              netPosition: netLoanPosition,
+              monthlyData: loanData
+            },
+            financialInsights: {
+              selfTransferAmount: selfTransferAmount,
+              loanDisbursementAmount: loanDisbursementAmount,
+              trueIncome: trueIncomeCategories.reduce((sum, cat) => sum + cat.total_amount, 0),
+              totalExpenses: expenseCategories.reduce((sum, cat) => sum + cat.amount, 0),
+              availableCashFlow: trueIncomeCategories.reduce((sum, cat) => sum + cat.total_amount, 0) - 
+                                expenseCategories.reduce((sum, cat) => sum + cat.amount, 0) - totalDebtPayments
+            }
+          });
+        });
+      });
+    });
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err.stack);
@@ -2171,15 +2462,16 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 FinanceFlow Pro API server running on http://localhost:${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🛠️  Admin interface: http://localhost:${PORT}/admin`);
-  console.log(`📁 Database: ${dbPath}`);
-  console.log(`📄 PDF parsing: ENABLED`);
-  console.log(`🗂️  Sample data: ${process.env.LOAD_SAMPLE_DATA === 'true' ? 'ENABLED' : 'DISABLED'}`);
-});
+// Start server only if this file is run directly (not during testing)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 FinanceFlow Pro API server running on http://localhost:${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`📁 Database: ${dbPath}`);
+    console.log(`📄 PDF parsing: ENABLED`);
+    console.log(`🗂️  Sample data: ${process.env.LOAD_SAMPLE_DATA === 'true' ? 'ENABLED' : 'DISABLED'}`);
+  });
+}
 
 // Graceful shutdown
 process.on('SIGINT', () => {

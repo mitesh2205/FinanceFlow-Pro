@@ -6,6 +6,7 @@
     <title>FinanceFlow Pro - Personal Finance Management</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="validation.js"></script>
 </head>
 <body>
     <!-- Sidebar Navigation -->
@@ -24,6 +25,12 @@
                 <a href="#" class="sidebar__link" data-page="transactions">
                     <span class="sidebar__icon">💳</span>
                     Transactions
+                </a>
+            </li>
+            <li class="sidebar__item">
+                <a href="#" class="sidebar__link" data-page="accounts">
+                    <span class="sidebar__icon">🏦</span>
+                    Accounts
                 </a>
             </li>
             <li class="sidebar__item">
@@ -63,6 +70,21 @@
                 </a>
             </li>
         </ul>
+        
+        <!-- User Info and Logout -->
+        <div class="sidebar__footer">
+            <div class="user-info" id="userInfo">
+                <div class="user-info__avatar">👤</div>
+                <div class="user-info__details">
+                    <div class="user-info__name" id="userName">Loading...</div>
+                    <div class="user-info__email" id="userEmail">Loading...</div>
+                </div>
+            </div>
+            <button class="btn btn--logout" onclick="handleLogout()">
+                <span class="sidebar__icon">🚪</span>
+                Logout
+            </button>
+        </div>
     </nav>
 
     <!-- Main Content -->
@@ -79,8 +101,8 @@
                     <button class="btn btn--primary search-btn">🔍</button>
                 </div>
                 <div class="user-profile">
-                    <span class="user-name">John Doe</span>
-                    <div class="user-avatar">JD</div>
+                    <span class="user-name" id="userName">Loading...</span>
+                    <div class="user-avatar" id="userAvatar">?</div>
                 </div>
             </div>
         </header>
@@ -122,19 +144,111 @@
 
                 <!-- Charts Section -->
                 <div class="charts-section">
-                    <div class="card">
+                    <div class="card chart-card-wide">
                         <div class="card__body">
-                            <h3>Cash Flow (Last 6 Months)</h3>
-                            <div class="chart-container">
-                                <canvas id="cashFlowChart"></canvas>
+                            <h3>📊 Monthly Income vs Expenses</h3>
+                            <div class="chart-container chart-container-large">
+                                <canvas id="monthlyBarChart"></canvas>
                             </div>
                         </div>
                     </div>
-                    <div class="card">
-                        <div class="card__body">
-                            <h3>Expense Breakdown</h3>
-                            <div class="chart-container">
-                                <canvas id="expenseChart"></canvas>
+                    <div class="chart-row">
+                        <div class="card chart-card-half">
+                            <div class="card__body">
+                                <h3>💰 Income by Category</h3>
+                                <div class="chart-container">
+                                    <canvas id="incomePieChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card chart-card-half">
+                            <div class="card__body">
+                                <h3>💸 Expenses by Category</h3>
+                                <div class="chart-container">
+                                    <canvas id="expensePieChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Financial Health Gauge -->
+                <div class="card financial-health-card">
+                    <div class="card__body">
+                        <h3>💊 Financial Health Score</h3>
+                        <div class="health-gauge-container">
+                            <canvas id="healthGaugeChart"></canvas>
+                            <div class="health-score-text">
+                                <div class="score-value" id="healthScoreValue">--</div>
+                                <div class="score-label">Health Score</div>
+                            </div>
+                        </div>
+                        <div class="health-insights" id="healthInsights">
+                            <div class="insight-item">
+                                <span class="insight-icon">💰</span>
+                                <span class="insight-text">Analyzing your financial patterns...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Smart Financial Insights -->
+                <div class="card smart-insights-card">
+                    <div class="card__body">
+                        <h3>🧠 Smart Financial Analysis</h3>
+                        <div class="insights-grid">
+                            <div class="insight-metric">
+                                <div class="metric-icon">💰</div>
+                                <div class="metric-content">
+                                    <div class="metric-label">True Income</div>
+                                    <div class="metric-value" id="trueIncomeValue">--</div>
+                                    <div class="metric-note">Excludes transfers & loans</div>
+                                </div>
+                            </div>
+                            <div class="insight-metric">
+                                <div class="metric-icon">🏦</div>
+                                <div class="metric-content">
+                                    <div class="metric-label">Debt Payments</div>
+                                    <div class="metric-value" id="loanPaymentsValue">--</div>
+                                    <div class="metric-note">Monthly avg (loans + credit cards)</div>
+                                </div>
+                            </div>
+                            <div class="insight-metric">
+                                <div class="metric-icon">🎯</div>
+                                <div class="metric-content">
+                                    <div class="metric-label">Available Cash</div>
+                                    <div class="metric-value" id="availableCashValue">--</div>
+                                    <div class="metric-note">After loans & expenses</div>
+                                </div>
+                            </div>
+                            <div class="insight-metric">
+                                <div class="metric-icon">🔄</div>
+                                <div class="metric-content">
+                                    <div class="metric-label">Self Transfers</div>
+                                    <div class="metric-value" id="selfTransfersValue">--</div>
+                                    <div class="metric-note">Money moved between accounts</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loan Analysis -->
+                <div class="card loan-analysis-card" id="loanAnalysisCard" style="display: none;">
+                    <div class="card__body">
+                        <h3>🏦 Debt & Loan Analysis</h3>
+                        <div class="loan-charts-row">
+                            <div class="loan-chart-section">
+                                <h4>Monthly Debt Payments</h4>
+                                <div class="chart-container">
+                                    <canvas id="loanPaymentChart"></canvas>
+                                </div>
+                            </div>
+                            <div class="loan-insights-section">
+                                <h4>Loan Insights</h4>
+                                <div class="loan-insights-list" id="loanInsightsList">
+                                    <!-- Populated by JavaScript -->
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -172,6 +286,17 @@
                     <button class="btn btn--outline" id="filterBtn">Filter</button>
                 </div>
             </div>
+
+            <!-- Bulk Actions Bar -->
+            <div class="bulk-actions-bar" id="bulkActionsBar" style="display: none;">
+                <div class="bulk-actions-info">
+                    <span id="selectedCount">0</span> transactions selected
+                </div>
+                <div class="bulk-actions-buttons">
+                    <button class="btn btn--danger btn--sm" id="bulkDeleteBtn">Delete Selected</button>
+                    <button class="btn btn--outline btn--sm" id="clearSelectionBtn">Clear Selection</button>
+                </div>
+            </div>
             
             <div class="transaction-filters" id="transactionFilters" style="display: none;">
                 <div class="filter-row">
@@ -193,6 +318,20 @@
                         <!-- Transaction table will be populated by JavaScript -->
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Accounts Page -->
+        <div class="page" id="accounts">
+            <div class="page-header">
+                <h2>Account Management</h2>
+                <div class="page-actions">
+                    <button class="btn btn--primary" id="addAccountBtn">+ Add Account</button>
+                </div>
+            </div>
+
+            <div class="accounts-grid" id="accountsGrid">
+                <!-- Accounts will be populated by JavaScript -->
             </div>
         </div>
 
@@ -375,11 +514,11 @@
                         <h3>Account Settings</h3>
                         <div class="form-group">
                             <label class="form-label">Full Name</label>
-                            <input type="text" class="form-control" value="John Doe">
+                            <input type="text" class="form-control" id="userFullName" placeholder="Loading...">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Email</label>
-                            <input type="email" class="form-control" value="john.doe@example.com">
+                            <input type="email" class="form-control" id="userEmail" placeholder="Loading...">
                         </div>
                         <button class="btn btn--primary">Update Profile</button>
                     </div>
@@ -443,6 +582,42 @@
                 <div class="modal-actions">
                     <button type="submit" class="btn btn--primary">Add Transaction</button>
                     <button type="button" class="btn btn--outline" id="cancelTransaction">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Account Modal -->
+    <div class="modal" id="addAccountModal">
+        <div class="modal-content">
+            <h3>Add New Account</h3>
+            <form id="addAccountForm">
+                <div class="form-group">
+                    <label class="form-label">Account Name</label>
+                    <input type="text" class="form-control" id="accountName" placeholder="e.g., Chase Checking" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Account Type</label>
+                    <select class="form-control" id="accountType" required>
+                        <option value="">Select type...</option>
+                        <option value="checking">Checking</option>
+                        <option value="savings">Savings</option>
+                        <option value="credit">Credit Card</option>
+                        <option value="investment">Investment</option>
+                        <option value="loan">Loan</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Institution</label>
+                    <input type="text" class="form-control" id="accountInstitution" placeholder="e.g., Chase Bank" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Initial Balance</label>
+                    <input type="number" class="form-control" id="accountBalance" placeholder="0.00" step="0.01">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn--outline" id="cancelAccount">Cancel</button>
+                    <button type="submit" class="btn btn--primary">Add Account</button>
                 </div>
             </form>
         </div>
