@@ -1,37 +1,6 @@
-# Node.js
-node_modules/
-npm-debug.log
-yarn-debug.log
-yarn-error.log
-
-# Environment variables
-.env
-
-# Database
-backend/database/*.db
-
-# VS Code
-.vscode/
-
-# OS specific
-.DS_Store
-Thumbs.db
-
-# Logs
-logs
+backend/.env
+backend/database/database.db
+backend/node_modules/
+**/node_modules/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
+.DS_Store
