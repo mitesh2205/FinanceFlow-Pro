@@ -80,6 +80,29 @@ router.post('/', (req, res) => {
     );
 });
 
+// Learn category from user edit
+router.post('/learn-category', (req, res) => {
+    const { descriptionSubstring, category } = req.body;
+    
+    if (!descriptionSubstring || !category) {
+        return res.status(400).json({ error: 'Missing description substring or category.' });
+    }
+
+    db.run(
+        `INSERT INTO merchant_category_map (description_substring, category)
+         VALUES (?, ?)
+         ON CONFLICT(description_substring) DO UPDATE SET category = excluded.category`,
+        [descriptionSubstring, category],
+        function(err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            res.json({ message: 'Learning updated', id: this.lastID });
+        }
+    );
+});
+
 // Delete transaction
 router.delete('/:id', (req, res) => {
     // Get transaction details first
