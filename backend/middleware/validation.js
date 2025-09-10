@@ -30,13 +30,12 @@ const commonValidation = {
     .withMessage(`${field} must be between 1 and ${maxLength} characters`)
     .escape(),
 
-  // Categories
+  // Categories - now allows any non-empty string up to 100 characters
   category: () => body('category')
-    .isIn([
-      'Food & Dining', 'Transportation', 'Entertainment', 'Bills & Utilities',
-      'Shopping', 'Healthcare', 'Education', 'Travel', 'Income', 'Transfer'
-    ])
-    .withMessage('Invalid category selected'),
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Category must be between 1 and 100 characters')
+    .escape(), // Prevent XSS
 
   // Account types
   accountType: () => body('type')
@@ -208,11 +207,9 @@ const validationRules = {
       .isFloat({ min: -999999.99, max: 999999.99 })
       .withMessage('Transaction amount must be between -999,999.99 and 999,999.99'),
     body('transactions.*.category')
-      .isIn([
-        'Food & Dining', 'Transportation', 'Entertainment', 'Bills & Utilities',
-        'Shopping', 'Healthcare', 'Education', 'Travel', 'Income', 'Transfer'
-      ])
-      .withMessage('Invalid transaction category')
+      .trim()
+      .isLength({ min: 1, max: 100 })
+      .withMessage('Transaction category must be between 1 and 100 characters')
   ]
 };
 

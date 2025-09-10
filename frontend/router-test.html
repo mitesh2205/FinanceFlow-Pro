@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+    <title>Router Test - FinanceFlow Pro</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 5px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+        }
+        .button:hover {
+            background: #0056b3;
+        }
+        .current-route {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        .log {
+            background: #f1f1f1;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Router Test Page</h1>
+    <p>This page demonstrates the new routing system for FinanceFlow Pro.</p>
+
+    <div class="current-route">
+        <strong>Current Route:</strong> <span id="currentRoute">Loading...</span><br>
+        <strong>Current Path:</strong> <span id="currentPath">Loading...</span><br>
+        <strong>Query Params:</strong> <span id="queryParams">Loading...</span>
+    </div>
+
+    <div class="test-section">
+        <h2>🧭 Navigation Tests</h2>
+        <p>Test basic navigation between pages:</p>
+        <a href="/dashboard" class="button">Dashboard</a>
+        <a href="/transactions" class="button">Transactions</a>
+        <a href="/accounts" class="button">Accounts</a>
+        <a href="/budget" class="button">Budget</a>
+        <a href="/goals" class="button">Goals</a>
+        <a href="/settings" class="button">Settings</a>
+    </div>
+
+    <div class="test-section">
+        <h2>🔗 Parameterized Routes</h2>
+        <p>Test routes with parameters:</p>
+        <button class="button" onclick="testParameterizedRoute()">Transaction #123</button>
+        <button class="button" onclick="testAccountRoute()">Account: "Main Checking"</button>
+    </div>
+
+    <div class="test-section">
+        <h2>❓ Query Parameters</h2>
+        <p>Test routes with query parameters:</p>
+        <button class="button" onclick="testQueryParams()">Transactions with filters</button>
+        <button class="button" onclick="testComplexQuery()">Complex query example</button>
+    </div>
+
+    <div class="test-section">
+        <h2>🚫 Error Handling</h2>
+        <p>Test error scenarios:</p>
+        <a href="/nonexistent-page" class="button">404 Test</a>
+        <button class="button" onclick="testProgrammaticNavigation()">Programmatic Navigation</button>
+    </div>
+
+    <div class="test-section">
+        <h2>⬅️ Browser Navigation</h2>
+        <p>Use your browser's back and forward buttons to test history management.</p>
+        <button class="button" onclick="window.history.back()">← Back</button>
+        <button class="button" onclick="window.history.forward()">Forward →</button>
+    </div>
+
+    <div class="test-section">
+        <h2>📋 Navigation Log</h2>
+        <div id="navigationLog" class="log">
+            Router system loading...
+        </div>
+        <button class="button" onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <!-- Load the router system -->
+    <script src="router.js"></script>
+    
+    <script>
+        // Simple logging function
+        function log(message) {
+            const logDiv = document.getElementById('navigationLog');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('navigationLog').innerHTML = '';
+        }
+
+        // Test functions
+        function testParameterizedRoute() {
+            router.navigate('/transactions/123');
+        }
+
+        function testAccountRoute() {
+            router.navigate('/accounts/Main%20Checking');
+        }
+
+        function testQueryParams() {
+            router.navigate('/transactions?category=Food%20%26%20Dining&dateFrom=2023-01-01');
+        }
+
+        function testComplexQuery() {
+            router.navigate('/analytics?period=monthly&compare=true&categories=food,transport&year=2023');
+        }
+
+        function testProgrammaticNavigation() {
+            // Test the Navigation helper functions
+            log('Testing programmatic navigation...');
+            setTimeout(() => router.navigate('/dashboard'), 500);
+            setTimeout(() => router.navigate('/transactions'), 1000);
+            setTimeout(() => router.navigate('/accounts'), 1500);
+        }
+
+        // Update current route display
+        function updateRouteDisplay() {
+            const currentRoute = router.getCurrentRoute();
+            
+            if (currentRoute) {
+                document.getElementById('currentRoute').textContent = currentRoute.route || 'Unknown';
+                document.getElementById('currentPath').textContent = currentRoute.path || 'Unknown';
+                document.getElementById('queryParams').textContent = JSON.stringify(currentRoute.query || {});
+            } else {
+                document.getElementById('currentRoute').textContent = 'No route';
+                document.getElementById('currentPath').textContent = window.location.pathname;
+                document.getElementById('queryParams').textContent = '{}';
+            }
+        }
+
+        // Simple route handlers for testing
+        const testRoutes = {
+            dashboard: () => log('📊 Dashboard route activated'),
+            transactions: (context) => {
+                const params = context.params.id ? ` (ID: ${context.params.id})` : '';
+                const query = Object.keys(context.query).length ? ` with filters: ${JSON.stringify(context.query)}` : '';
+                log(`💳 Transactions route activated${params}${query}`);
+            },
+            accounts: (context) => {
+                const accountName = context.params.name ? ` (${decodeURIComponent(context.params.name)})` : '';
+                log(`🏦 Accounts route activated${accountName}`);
+            },
+            budget: () => log('📋 Budget route activated'),
+            goals: () => log('🎯 Goals route activated'),
+            settings: () => log('⚙️ Settings route activated'),
+            analytics: (context) => {
+                const query = Object.keys(context.query).length ? ` with params: ${JSON.stringify(context.query)}` : '';
+                log(`📊 Analytics route activated${query}`);
+            },
+            notFound: (context) => log(`🚫 Route not found: ${context.path}`)
+        };
+
+        // Initialize router when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set up test routes
+            router
+                .route('/', { 
+                    handler: testRoutes.dashboard,
+                    title: 'Dashboard Test'
+                })
+                .route('/dashboard', { 
+                    handler: testRoutes.dashboard,
+                    title: 'Dashboard Test'
+                })
+                .route('/transactions', { 
+                    handler: testRoutes.transactions,
+                    title: 'Transactions Test'
+                })
+                .route('/transactions/:id', { 
+                    handler: testRoutes.transactions,
+                    title: 'Transaction Detail Test'
+                })
+                .route('/accounts', { 
+                    handler: testRoutes.accounts,
+                    title: 'Accounts Test'
+                })
+                .route('/accounts/:name', { 
+                    handler: testRoutes.accounts,
+                    title: 'Account Detail Test'
+                })
+                .route('/budget', { 
+                    handler: testRoutes.budget,
+                    title: 'Budget Test'
+                })
+                .route('/goals', { 
+                    handler: testRoutes.goals,
+                    title: 'Goals Test'
+                })
+                .route('/settings', { 
+                    handler: testRoutes.settings,
+                    title: 'Settings Test'
+                })
+                .route('/analytics', { 
+                    handler: testRoutes.analytics,
+                    title: 'Analytics Test'
+                })
+                .route('/404', { 
+                    handler: testRoutes.notFound,
+                    title: 'Page Not Found'
+                });
+
+            // Add a middleware to log all navigation
+            router.use(async (context) => {
+                log(`🚀 Navigating to: ${context.fullPath}`);
+                updateRouteDisplay();
+                return true; // Allow navigation to continue
+            });
+
+            // Initialize the router
+            router.init();
+            
+            log('✅ Router test system initialized');
+            log('🧪 Try clicking the navigation buttons or using browser back/forward buttons');
+            
+            // Update display initially
+            setTimeout(updateRouteDisplay, 100);
+        });
+    </script>
+</body>
+</html>

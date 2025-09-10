@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="validation.js"></script>
+    <script src="router.js"></script>
+    <script src="routes.js"></script>
 </head>
 <body>
     <!-- Sidebar Navigation -->
@@ -565,9 +567,14 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">Category</label>
-                    <select class="form-control" id="transactionCategory" required>
-                        <!-- Categories will be populated by JavaScript -->
-                    </select>
+                    <div class="category-input-wrapper">
+                        <select class="form-control" id="transactionCategory" required>
+                            <!-- Categories will be populated by JavaScript -->
+                        </select>
+                        <input type="text" class="form-control" id="transactionCategoryCustom" placeholder="Or type new category..." style="display: none;">
+                        <button type="button" class="btn btn--sm btn--outline" id="addCategoryBtn" title="Add new category">+</button>
+                    </div>
+                    <div class="category-suggestions" id="categorySuggestions" style="display: none;"></div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Account</label>

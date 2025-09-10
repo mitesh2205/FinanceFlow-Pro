@@ -2162,3 +2162,65 @@ select.form-control {
 .transaction-table tbody tr.selected {
   background-color: var(--color-primary-light, rgba(74, 144, 226, 0.1));
 }
+
+/* Dynamic Category Creation Styles */
+.category-input-wrapper {
+  display: flex;
+  gap: var(--space-8);
+  align-items: center;
+}
+
+.category-input-wrapper select {
+  flex: 1;
+}
+
+.category-input-wrapper input {
+  flex: 1;
+}
+
+.category-input-wrapper button {
+  padding: var(--space-8) var(--space-12);
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.category-suggestions {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-surface);
+  margin-top: var(--space-4);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.category-suggestion-item {
+  padding: var(--space-8) var(--space-12);
+  cursor: pointer;
+  border-bottom: 1px solid var(--color-border);
+  transition: background-color 0.2s;
+}
+
+.category-suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.category-suggestion-item:hover {
+  background-color: var(--color-secondary);
+}
+
+.category-suggestion-item.active {
+  background-color: var(--color-primary);
+  color: var(--color-btn-primary-text);
+}
+
+.category-suggestion-new {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-primary);
+}
+
+.category-suggestion-new::before {
+  content: "+ ";
+}

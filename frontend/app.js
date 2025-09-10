@@ -13,10 +13,7 @@ let appData = {
   budgets: [],
   goals: [],
   investments: [],
-  categories: [
-    "Food & Dining", "Transportation", "Entertainment", "Bills & Utilities", 
-    "Shopping", "Healthcare", "Education", "Travel", "Income", "Transfer"
-  ],
+  categories: [], // Will be loaded from API
   monthlyData: []
 };
 
@@ -130,6 +127,19 @@ async function loadInvestments() {
     appData.investments = await apiRequest('/investments');
   } catch (error) {
     console.error('Failed to load investments:', error);
+  }
+}
+
+async function loadCategories() {
+  try {
+    appData.categories = await apiRequest('/categories');
+  } catch (error) {
+    console.error('Failed to load categories:', error);
+    // Fallback to basic categories if API fails
+    appData.categories = [
+      "Food & Dining", "Transportation", "Entertainment", "Bills & Utilities",
+      "Shopping", "Healthcare", "Education", "Travel", "Income", "Transfer"
+    ];
   }
 }
 
@@ -290,7 +300,8 @@ async function initializeDashboard() {
     await Promise.all([
       loadDashboardData(),
       loadTransactions(),
-      loadBudgets()
+      loadBudgets(),
+      loadCategories()
     ]);
     
     renderRecentTransactions();
@@ -878,7 +889,8 @@ async function initializeTransactions() {
   try {
     await Promise.all([
       loadTransactions(),
-      loadAccounts()
+      loadAccounts(),
+      loadCategories()
     ]);
     
     renderTransactionFilters();
@@ -1203,6 +1215,7 @@ function setupTransactionEventListeners() {
 
 function populateTransactionModal(transaction = null) {
   const categorySelect = document.getElementById('transactionCategory');
+  const categoryCustom = document.getElementById('transactionCategoryCustom');
   const accountSelect = document.getElementById('transactionAccount');
   const dateInput = document.getElementById('transactionDate');
   const descriptionInput = document.getElementById('transactionDescription');
@@ -1230,6 +1243,162 @@ function populateTransactionModal(transaction = null) {
   
   if (amountInput) {
     amountInput.value = transaction ? transaction.amount : '';
+  }
+
+  // Setup dynamic category functionality
+  setupDynamicCategoryInput();
+  
+  // If editing and category doesn't exist in predefined list, show custom input
+  if (transaction && !appData.categories.includes(transaction.category)) {
+    showCustomCategoryInput();
+    categoryCustom.value = transaction.category;
+  }
+}
+
+// Dynamic Category Input Functions
+function setupDynamicCategoryInput() {
+  const addCategoryBtn = document.getElementById('addCategoryBtn');
+  const categorySelect = document.getElementById('transactionCategory');
+  const categoryCustom = document.getElementById('transactionCategoryCustom');
+  const categorySuggestions = document.getElementById('categorySuggestions');
+  
+  // Remove existing listeners to avoid duplicates
+  const newAddCategoryBtn = addCategoryBtn.cloneNode(true);
+  addCategoryBtn.parentNode.replaceChild(newAddCategoryBtn, addCategoryBtn);
+  
+  // Add category button click
+  newAddCategoryBtn.addEventListener('click', toggleCategoryInput);
+  
+  // Category custom input listeners
+  if (categoryCustom) {
+    const newCategoryCustom = categoryCustom.cloneNode(true);
+    categoryCustom.parentNode.replaceChild(newCategoryCustom, categoryCustom);
+    
+    newCategoryCustom.addEventListener('input', handleCategoryInput);
+    newCategoryCustom.addEventListener('keydown', handleCategoryKeydown);
+    newCategoryCustom.addEventListener('blur', hideCategorySuggestions);
+  }
+}
+
+function toggleCategoryInput() {
+  const categorySelect = document.getElementById('transactionCategory');
+  const categoryCustom = document.getElementById('transactionCategoryCustom');
+  const addCategoryBtn = document.getElementById('addCategoryBtn');
+  
+  if (categorySelect.style.display === 'none') {
+    // Switch back to select
+    categorySelect.style.display = 'block';
+    categoryCustom.style.display = 'none';
+    addCategoryBtn.textContent = '+';
+    addCategoryBtn.title = 'Add new category';
+    hideCategorySuggestions();
+  } else {
+    // Switch to custom input
+    showCustomCategoryInput();
+  }
+}
+
+function showCustomCategoryInput() {
+  const categorySelect = document.getElementById('transactionCategory');
+  const categoryCustom = document.getElementById('transactionCategoryCustom');
+  const addCategoryBtn = document.getElementById('addCategoryBtn');
+  
+  categorySelect.style.display = 'none';
+  categoryCustom.style.display = 'block';
+  addCategoryBtn.textContent = '↩';
+  addCategoryBtn.title = 'Back to category list';
+  categoryCustom.focus();
+}
+
+function handleCategoryInput(e) {
+  const query = e.target.value.toLowerCase().trim();
+  if (query.length === 0) {
+    hideCategorySuggestions();
+    return;
+  }
+  
+  showCategorySuggestions(query);
+}
+
+function showCategorySuggestions(query) {
+  const suggestions = document.getElementById('categorySuggestions');
+  
+  // Find matching existing categories
+  const matches = appData.categories.filter(cat => 
+    cat.toLowerCase().includes(query)
+  ).slice(0, 5);
+  
+  let suggestionHTML = '';
+  
+  // Add existing category matches
+  matches.forEach(cat => {
+    suggestionHTML += `<div class="category-suggestion-item" data-category="${cat}">${cat}</div>`;
+  });
+  
+  // Add "create new" option
+  if (query.length >= 2) {
+    suggestionHTML += `<div class="category-suggestion-item category-suggestion-new" data-category="${query}">Create "${query}"</div>`;
+  }
+  
+  if (suggestionHTML) {
+    suggestions.innerHTML = suggestionHTML;
+    suggestions.style.display = 'block';
+    
+    // Add click listeners to suggestion items
+    suggestions.querySelectorAll('.category-suggestion-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // Prevent blur event
+        selectCategory(e.target.dataset.category);
+      });
+    });
+  } else {
+    hideCategorySuggestions();
+  }
+}
+
+function selectCategory(category) {
+  const categoryCustom = document.getElementById('transactionCategoryCustom');
+  categoryCustom.value = category;
+  hideCategorySuggestions();
+}
+
+function hideCategorySuggestions() {
+  const suggestions = document.getElementById('categorySuggestions');
+  suggestions.style.display = 'none';
+}
+
+function handleCategoryKeydown(e) {
+  const suggestions = document.getElementById('categorySuggestions');
+  const items = suggestions.querySelectorAll('.category-suggestion-item');
+  
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    let current = suggestions.querySelector('.active');
+    if (current) {
+      current.classList.remove('active');
+      current = current.nextElementSibling || items[0];
+    } else {
+      current = items[0];
+    }
+    if (current) current.classList.add('active');
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    let current = suggestions.querySelector('.active');
+    if (current) {
+      current.classList.remove('active');
+      current = current.previousElementSibling || items[items.length - 1];
+    } else {
+      current = items[items.length - 1];
+    }
+    if (current) current.classList.add('active');
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const active = suggestions.querySelector('.active');
+    if (active) {
+      selectCategory(active.dataset.category);
+    }
+  } else if (e.key === 'Escape') {
+    hideCategorySuggestions();
   }
 }
 
@@ -1267,11 +1436,24 @@ async function learnCategory(description, category) {
 async function handleAddEditTransaction(e) {
   e.preventDefault();
   
+  // Get the category from either select or custom input
+  const categorySelect = document.getElementById('transactionCategory');
+  const categoryCustom = document.getElementById('transactionCategoryCustom');
+  const category = categorySelect.style.display === 'none' 
+    ? categoryCustom.value.trim() 
+    : categorySelect.value;
+  
+  // Validate category
+  if (!category) {
+    showToast('Please select or enter a category', 'error');
+    return;
+  }
+  
   const transactionData = {
     date: document.getElementById('transactionDate').value,
     description: document.getElementById('transactionDescription').value,
     amount: parseFloat(document.getElementById('transactionAmount').value),
-    category: document.getElementById('transactionCategory').value,
+    category: category,
     account_name: document.getElementById('transactionAccount').value
   };
   
@@ -1302,7 +1484,17 @@ async function handleAddEditTransaction(e) {
       showToast('Transaction added successfully');
     }
     
-    await loadTransactions();
+    // Add new category to local list if it doesn't exist
+    if (!appData.categories.includes(transactionData.category)) {
+      appData.categories.push(transactionData.category);
+      appData.categories.sort(); // Keep categories sorted
+      showToast(`New category "${transactionData.category}" added!`);
+    }
+    
+    await Promise.all([
+      loadTransactions(),
+      loadCategories() // Reload categories to get the latest from database
+    ]);
     renderTransactionTable();
     document.getElementById('addTransactionModal').classList.remove('active');
     e.target.reset();
@@ -1900,8 +2092,9 @@ async function processUpload() {
           document.getElementById('fileInput').value = '';
           
           // Navigate to transactions page to see the imported data
-          const targetLink = document.querySelector('[data-page="transactions"]');
-          if (targetLink) targetLink.click();
+          if (window.Navigation) {
+            Navigation.to('transactions');
+          }
         }, 1000);
       }
     }, 200);
@@ -1977,21 +2170,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('API connection failed. Some features may not work.', 'error');
   }
   
-  initializeNavigation();
+  // Initialize the new routing system instead of old navigation
+  initializeRouting();
   initializeUserInfo();
-  await initializeDashboard();
   initializeSearch();
   
+  // Set up modal event handlers
   document.addEventListener('click', (e) => {
     if (e.target.classList.contains('modal')) {
       e.target.classList.remove('active');
     }
   });
   
+  // Set default date for transaction form
   const transactionDate = document.getElementById('transactionDate');
   if (transactionDate) {
     transactionDate.value = new Date().toISOString().split('T')[0];
   }
+  
+  console.log('FinanceFlow Pro initialized with new routing system');
 });
 
 window.addEventListener('resize', () => {
@@ -2023,10 +2220,12 @@ function debounce(func, wait) {
   };
 }
 
+// Backward compatibility - use new Navigation system
 window.navigateToPage = function(page) {
-  const targetLink = document.querySelector(`[data-page="${page}"]`);
-  if (targetLink) {
-    targetLink.click();
+  if (window.Navigation) {
+    Navigation.to(page);
+  } else {
+    console.warn('Navigation system not available');
   }
 };
 
